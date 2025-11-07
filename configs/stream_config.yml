@@ -1,0 +1,20 @@
+stream:
+  input_url: "https://www.youtube.com/watch?v=VIDEO_ID"
+  output_url: "rtmp://localhost/live/output"
+  target_fps: 30
+  bitrate: "4000k"
+  preset: "ultrafast"
+  show_stats: true
+  debug_mode: true
+
+output:
+  width: 1920
+  height: 1080
+
+camera:
+  dead_zone: 0.10
+  anticipation: 0.3
+  zoom_padding: 1.2
+  smoothing_freq: 30.0
+  smoothing_min_cutoff: 1.0
+  smoothing_beta: 0.007

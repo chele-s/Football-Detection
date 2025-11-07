@@ -1,0 +1,19 @@
+input:
+  video_path: "data/inputs/test_match.mp4"
+
+output:
+  video_path: "data/outputs/batch_renders/output.mp4"
+  tracking_path: "data/outputs/tracker_paths/tracking.json"
+  width: 1920
+  height: 1080
+  codec: "mp4v"
+
+camera:
+  dead_zone: 0.10
+  anticipation: 0.3
+  zoom_padding: 1.2
+  smoothing_freq: 30.0
+  smoothing_min_cutoff: 1.0
+  smoothing_beta: 0.007
+
+save_tracking_data: true

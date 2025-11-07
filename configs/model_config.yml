@@ -1,0 +1,12 @@
+model:
+  path: "models/yolov8_nano.pt"
+  confidence: 0.25
+  iou_threshold: 0.45
+  device: "cuda"
+  half_precision: true
+  ball_class_id: 0
+
+tracking:
+  max_lost_frames: 10
+  min_confidence: 0.3
+  history_size: 30
