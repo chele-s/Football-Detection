@@ -102,19 +102,36 @@ def test_tracker():
         return False
 
 def test_detector():
-    logger.info("Testing BallDetector (requires model)...")
+    logger.info("Testing BallDetector with RF-DETR Medium...")
     try:
         from app.inference.detector import BallDetector
         import cv2
         
+        logger.info("Initializing RF-DETR Medium detector...")
+        detector = BallDetector(
+            model_path=None,
+            confidence_threshold=0.3,
+            device='cuda' if np.random.rand() > 0.5 else 'cpu',
+            warmup_iterations=1
+        )
+        
         dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
         
-        logger.info("Note: Detector test requires yolov8n.pt model")
-        logger.info("Skipping detector test (model not available in test)")
+        logger.info("Running test inference...")
+        detections = detector.predict(dummy_frame)
+        
+        stats = detector.get_stats()
+        logger.info(f"Detector stats: {stats}")
+        
+        model_info = detector.get_model_info()
+        logger.info(f"Model info: {model_info}")
+        
+        assert model_info['model_type'] == 'RF-DETR Medium'
+        logger.info("✓ BallDetector test passed")
         return True
     except Exception as e:
-        logger.warning(f"Detector test skipped: {e}")
-        return True
+        logger.error(f"✗ BallDetector test failed: {e}")
+        return False
 
 def test_imports():
     logger.info("Testing all imports...")

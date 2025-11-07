@@ -1,8 +1,9 @@
 """
-Detector de balón optimizado usando YOLOv8.
+Detector de balón optimizado usando RF-DETR.
 
 Optimizaciones para baja latencia:
-- Soporte CUDA/TensorRT automático
+- RF-DETR Medium con optimize_for_inference
+- Soporte CUDA automático
 - Half-precision (FP16) en GPU
 - Batch size = 1 para streaming
 - Configuración de confidence threshold adaptativa
@@ -12,9 +13,11 @@ import numpy as np
 import torch
 import logging
 import time
+import supervision as sv
 from typing import Optional, List, Tuple, Dict
 from pathlib import Path
 from collections import deque
+from PIL import Image
 import cv2
 
 logger = logging.getLogger(__name__)
@@ -24,7 +27,7 @@ class BallDetector:
     
     def __init__(
         self,
-        model_path: str,
+        model_path: Optional[str] = None,
         confidence_threshold: float = 0.25,
         iou_threshold: float = 0.45,
         device: Optional[str] = None,
@@ -35,11 +38,11 @@ class BallDetector:
         warmup_iterations: int = 3
     ):
         try:
-            from ultralytics import YOLO
+            from rfdetr import RFDETRMedium
         except ImportError:
-            raise ImportError("Ultralytics not installed. Run: pip install ultralytics")
+            raise ImportError("RF-DETR not installed. Run: pip install rfdetr supervision")
         
-        self.model_path = Path(model_path)
+        self.model_path = Path(model_path) if model_path else None
         self.confidence_threshold = confidence_threshold
         self.iou_threshold = iou_threshold
         self.imgsz = imgsz
@@ -54,28 +57,35 @@ class BallDetector:
         
         self.half_precision = half_precision and self.device == 'cuda'
         
-        logger.info(f"Initializing BallDetector")
-        logger.info(f"Model path: {self.model_path}")
+        logger.info(f"Initializing BallDetector with RF-DETR Medium")
+        if self.model_path:
+            logger.info(f"Custom model path: {self.model_path}")
         logger.info(f"Device: {self.device}")
         logger.info(f"Half precision: {self.half_precision}")
         logger.info(f"Image size: {self.imgsz}")
-        logger.info(f"TensorRT: {self.enable_tensorrt}")
         
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"Model not found: {self.model_path}")
+        from rfdetr import RFDETRMedium
         
-        self.model = YOLO(str(self.model_path))
+        if self.model_path and self.model_path.exists():
+            logger.info(f"Loading custom RF-DETR model from {self.model_path}")
+            self.model = RFDETRMedium()
+            checkpoint = torch.load(str(self.model_path), map_location=self.device)
+            self.model.load_state_dict(checkpoint['model'] if 'model' in checkpoint else checkpoint)
+        else:
+            logger.info("Loading pretrained RF-DETR Medium on COCO")
+            self.model = RFDETRMedium()
         
         if self.device == 'cuda':
-            self.model.to('cuda')
-            if self.half_precision:
-                self.model.model.half()
-                logger.info("FP16 mode enabled")
+            self.model = self.model.to('cuda')
             
             if torch.cuda.is_available():
                 gpu_name = torch.cuda.get_device_name(0)
                 gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
                 logger.info(f"GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+        
+        logger.info("Optimizing model for inference...")
+        self.model.optimize_for_inference()
+        logger.info("Model optimization complete")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
@@ -90,38 +100,23 @@ class BallDetector:
         
         self._warmup()
         
-        if self.enable_tensorrt and self.device == 'cuda':
-            self._export_tensorrt()
-        
         logger.info("BallDetector initialized successfully")
     
     def _warmup(self):
         logger.info(f"Warming up model ({self.warmup_iterations} iterations)...")
         dummy_frame = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
+        dummy_image = Image.fromarray(dummy_frame)
         
+        warmup_times = []
         for i in range(self.warmup_iterations):
             start = time.time()
-            _ = self.model.predict(
-                dummy_frame,
-                conf=self.confidence_threshold,
-                iou=self.iou_threshold,
-                verbose=False,
-                device=self.device,
-                half=self.half_precision,
-                imgsz=self.imgsz
-            )
+            _ = self.model.predict(dummy_image, threshold=self.confidence_threshold)
             elapsed = (time.time() - start) * 1000
+            warmup_times.append(elapsed)
             logger.debug(f"Warmup {i+1}/{self.warmup_iterations}: {elapsed:.2f}ms")
         
-        logger.info("Warmup completed")
-    
-    def _export_tensorrt(self):
-        try:
-            logger.info("Exporting to TensorRT...")
-            self.model.export(format='engine', half=self.half_precision, imgsz=self.imgsz)
-            logger.info("TensorRT export successful")
-        except Exception as e:
-            logger.warning(f"TensorRT export failed: {e}. Using standard model.")
+        avg_warmup = np.mean(warmup_times)
+        logger.info(f"Warmup completed - avg time: {avg_warmup:.2f}ms")
     
     def predict(
         self,
@@ -132,27 +127,29 @@ class BallDetector:
         start_time = time.time()
         self.stats['total_inferences'] += 1
         
-        if self.multi_scale:
-            results = self._multi_scale_inference(frame)
+        if isinstance(frame, np.ndarray):
+            if len(frame.shape) == 2:
+                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+            elif frame.shape[2] == 4:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+            elif frame.shape[2] == 3:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame)
         else:
-            results = self.model.predict(
-                frame,
-                conf=self.confidence_threshold,
-                iou=self.iou_threshold,
-                verbose=False,
-                device=self.device,
-                half=self.half_precision,
-                imgsz=self.imgsz,
-                augment=augment
-            )
+            image = frame
+        
+        if self.multi_scale:
+            detections_sv = self._multi_scale_inference(image)
+        else:
+            detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
         
         inference_time = (time.time() - start_time) * 1000
         self.inference_times.append(inference_time)
         
         if return_raw:
-            return results
+            return detections_sv
         
-        detections = self._parse_results(results)
+        detections = self._parse_sv_detections(detections_sv)
         
         if len(detections) == 0:
             self.stats['empty_frames'] += 1
@@ -169,68 +166,87 @@ class BallDetector:
         
         return detections
     
-    def _parse_results(self, results) -> List[Tuple[float, float, float, float, float, int]]:
+    def _parse_sv_detections(self, detections_sv: sv.Detections) -> List[Tuple[float, float, float, float, float, int]]:
         detections = []
         
-        if len(results) > 0 and results[0].boxes is not None:
-            boxes = results[0].boxes
+        if detections_sv is None or len(detections_sv) == 0:
+            return detections
+        
+        for i in range(len(detections_sv)):
+            x1, y1, x2, y2 = detections_sv.xyxy[i]
+            conf = float(detections_sv.confidence[i])
+            cls_id = int(detections_sv.class_id[i])
             
-            for i in range(len(boxes)):
-                xyxy = boxes.xyxy[i].cpu().numpy()
-                conf = float(boxes.conf[i].cpu().numpy())
-                cls_id = int(boxes.cls[i].cpu().numpy())
-                
-                x1, y1, x2, y2 = xyxy
-                x_center = (x1 + x2) / 2
-                y_center = (y1 + y2) / 2
-                width = x2 - x1
-                height = y2 - y1
-                
-                calibrated_conf = self._calibrate_confidence(conf, width, height)
-                
-                detections.append((
-                    x_center,
-                    y_center,
-                    width,
-                    height,
-                    calibrated_conf,
-                    cls_id
-                ))
+            x_center = (x1 + x2) / 2
+            y_center = (y1 + y2) / 2
+            width = x2 - x1
+            height = y2 - y1
+            
+            calibrated_conf = self._calibrate_confidence(conf, width, height)
+            
+            detections.append((
+                x_center,
+                y_center,
+                width,
+                height,
+                calibrated_conf,
+                cls_id
+            ))
         
         return detections
     
-    def _multi_scale_inference(self, frame: np.ndarray):
+    def _multi_scale_inference(self, image: Image.Image) -> sv.Detections:
         scales = [0.8, 1.0, 1.2]
-        all_results = []
+        all_detections = []
+        
+        original_size = image.size
         
         for scale in scales:
-            h, w = frame.shape[:2]
-            new_h, new_w = int(h * scale), int(w * scale)
-            resized = cv2.resize(frame, (new_w, new_h))
+            new_w = int(original_size[0] * scale)
+            new_h = int(original_size[1] * scale)
+            resized_image = image.resize((new_w, new_h), Image.BILINEAR)
             
-            results = self.model.predict(
-                resized,
-                conf=self.confidence_threshold,
-                iou=self.iou_threshold,
-                verbose=False,
-                device=self.device,
-                half=self.half_precision,
-                imgsz=self.imgsz
-            )
+            detections = self.model.predict(resized_image, threshold=self.confidence_threshold)
             
-            if len(results) > 0 and results[0].boxes is not None:
-                boxes = results[0].boxes.xyxy.cpu().numpy()
-                boxes = boxes / scale
-                results[0].boxes.xyxy = torch.tensor(boxes).to(results[0].boxes.xyxy.device)
-                all_results.append(results[0])
+            if detections is not None and len(detections) > 0:
+                detections.xyxy = detections.xyxy / scale
+                all_detections.append(detections)
         
-        return [self._merge_multi_scale_results(all_results)] if all_results else []
+        if len(all_detections) == 0:
+            return sv.Detections.empty()
+        
+        return self._merge_multi_scale_detections(all_detections)
     
-    def _merge_multi_scale_results(self, results_list):
-        if len(results_list) == 1:
-            return results_list[0]
+    def _merge_multi_scale_detections(self, detections_list: List[sv.Detections]) -> sv.Detections:
+        if len(detections_list) == 1:
+            return detections_list[0]
         
-        return results_list[0]
+        all_xyxy = np.vstack([d.xyxy for d in detections_list])
+        all_conf = np.concatenate([d.confidence for d in detections_list])
+        all_cls = np.concatenate([d.class_id for d in detections_list])
+        
+        merged = sv.Detections(
+            xyxy=all_xyxy,
+            confidence=all_conf,
+            class_id=all_cls
+        )
+        
+        nms_idx = self._apply_nms(merged)
+        
+        return sv.Detections(
+            xyxy=merged.xyxy[nms_idx],
+            confidence=merged.confidence[nms_idx],
+            class_id=merged.class_id[nms_idx]
+        )
+    
+    def _apply_nms(self, detections: sv.Detections) -> np.ndarray:
+        boxes = torch.from_numpy(detections.xyxy).float()
+        scores = torch.from_numpy(detections.confidence).float()
+        
+        from torchvision.ops import nms
+        keep_idx = nms(boxes, scores, self.iou_threshold)
+        
+        return keep_idx.cpu().numpy()
     
     def _calibrate_confidence(self, conf: float, width: float, height: float) -> float:
         area = width * height
@@ -334,14 +350,15 @@ class BallDetector:
     
     def get_model_info(self) -> Dict:
         info = {
-            'model_path': str(self.model_path),
+            'model_type': 'RF-DETR Medium',
+            'model_path': str(self.model_path) if self.model_path else 'Pretrained COCO',
             'device': self.device,
             'half_precision': self.half_precision,
             'confidence_threshold': self.confidence_threshold,
             'iou_threshold': self.iou_threshold,
             'image_size': self.imgsz,
             'multi_scale': self.multi_scale,
-            'tensorrt_enabled': self.enable_tensorrt,
+            'optimized_for_inference': True,
             'cuda_available': torch.cuda.is_available()
         }
         

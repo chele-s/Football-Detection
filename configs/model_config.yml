@@ -1,9 +1,12 @@
 model:
-  path: "models/yolov8_nano.pt"
+  path: "models/best_rf-detr.pth"
   confidence: 0.25
   iou_threshold: 0.45
   device: "cuda"
   half_precision: true
+  imgsz: 640
+  multi_scale: false
+  warmup_iterations: 3
   ball_class_id: 0
 
 tracking:
