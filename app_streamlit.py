@@ -6,6 +6,7 @@ import threading
 from collections import deque
 from queue import Queue
 import torch
+from streamlit_autorefresh import st_autorefresh
 
 from app.inference import BallDetector
 from app.tracking import BallTracker
@@ -286,59 +287,48 @@ def main():
     
     import base64
     
-    last_stats = None
-    update_counter = 0
+    if 'last_stats' not in st.session_state:
+        st.session_state['last_stats'] = None
     
-    while True:
-        update_counter += 1
-        has_update = False
+    refresh_interval = 100 if processor.running else 1000
+    st_autorefresh(interval=refresh_interval, key="rf_live_refresh")
+    
+    frame = processor.get_frame()
+    
+    if frame is not None:
+        h, w = frame.shape[:2]
+        if w > 960:
+            scale = 960 / w
+            new_w, new_h = int(w * scale), int(h * scale)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         
-        frame = processor.get_frame()
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        frame_b64 = base64.b64encode(buffer).decode()
         
-        if frame is not None:
-            has_update = True
+        frame_placeholder.markdown(
+            f'<img src="data:image/jpeg;base64,{frame_b64}" style="width:100%;height:auto">',
+            unsafe_allow_html=True
+        )
+    
+    stats = processor.get_stats()
+    
+    if stats and (st.session_state['last_stats'] is None or stats['frame_count'] != st.session_state['last_stats'].get('frame_count', -1)):
+        st.session_state['last_stats'] = stats
+        with stats_placeholder.container():
+            st.metric("Frames Processed", f"{stats['frame_count']:,}")
+            st.metric("FPS", f"{stats['avg_fps']:.1f}")
+            st.metric("Avg Detections", f"{stats['avg_detections']:.1f}")
             
-            h, w = frame.shape[:2]
-            if w > 960:
-                scale = 960 / w
-                new_w, new_h = int(w * scale), int(h * scale)
-                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            st.divider()
             
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-            frame_b64 = base64.b64encode(buffer).decode()
-            
-            frame_placeholder.markdown(
-                f'<img src="data:image/jpeg;base64,{frame_b64}" style="width:100%;height:auto">',
-                unsafe_allow_html=True
-            )
-        
-        stats = processor.get_stats()
-        
-        if stats and (last_stats is None or stats['frame_count'] != last_stats.get('frame_count', -1)):
-            has_update = True
-            last_stats = stats
-            with stats_placeholder.container():
-                st.metric("Frames Processed", f"{stats['frame_count']:,}")
-                st.metric("FPS", f"{stats['avg_fps']:.1f}")
-                st.metric("Avg Detections", f"{stats['avg_detections']:.1f}")
-                
-                st.divider()
-                
-                tracking_status = "🟢 Active" if stats['tracking'] else "🔴 Lost"
-                st.metric("Tracking", tracking_status)
-                st.metric("Predictions Used", stats['predictions_used'])
-                st.metric("Successful Tracks", stats['successful_tracks'])
-                st.metric("PID Corrections", stats['pid_corrections'])
-        
-        if not processor.running and processor.thread and not processor.thread.is_alive():
-            st.error("Stream processing stopped")
-            break
-        
-        if has_update:
-            time.sleep(0.01)
-            st.rerun()
-        else:
-            time.sleep(0.1)
+            tracking_status = "🟢 Active" if stats['tracking'] else "🔴 Lost"
+            st.metric("Tracking", tracking_status)
+            st.metric("Predictions Used", stats['predictions_used'])
+            st.metric("Successful Tracks", stats['successful_tracks'])
+            st.metric("PID Corrections", stats['pid_corrections'])
+    
+    if not processor.running and processor.thread and not processor.thread.is_alive():
+        st.error("Stream processing stopped")
 
 if __name__ == "__main__":
     main()

@@ -93,10 +93,11 @@ class BallDetector:
         self.model.optimize_for_inference()
         logger.info("Model optimization complete - ready for inference")
         
-        if hasattr(torch, 'compile') and torch.cuda.is_available():
+        if hasattr(torch, 'compile') and torch.cuda.is_available() and isinstance(self.model, torch.nn.Module):
             try:
                 logger.info("Applying torch.compile for additional speedup...")
-                self.model = torch.compile(self.model, mode='reduce-overhead', fullgraph=False)
+                compiled = torch.compile(self.model, mode='reduce-overhead', fullgraph=False)
+                self.model = compiled
                 logger.info("torch.compile applied successfully")
             except Exception as e:
                 logger.warning(f"torch.compile failed: {e}")

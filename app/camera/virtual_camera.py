@@ -115,7 +115,10 @@ class TrajectoryPredictor:
             ddx = np.gradient(dx)
             ddy = np.gradient(dy)
             
-            curvature = np.abs(dx * ddy - dy * ddx) / (dx**2 + dy**2)**1.5
+            denom = (dx**2 + dy**2)**1.5
+            denom = np.where(denom < 1e-9, 1e-9, denom)
+            curvature = np.abs(dx * ddy - dy * ddx) / denom
+            curvature = np.nan_to_num(curvature, nan=0.0, posinf=0.0, neginf=0.0)
             return np.mean(curvature[-3:])
         except:
             return 0.0
