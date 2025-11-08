@@ -21,59 +21,73 @@ class RTMPClient:
         try:
             import yt_dlp
             
-            ydl_opts = {
-                'format': 'best[ext=mp4]/best',
-                'quiet': True,
-                'no_warnings': True,
-                'cookiesfrombrowser': ('chrome',),
-                'extract_flat': False,
-                'nocheckcertificate': True,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'web'],
-                        'skip': ['hls', 'dash']
+            print("[INFO] YouTube bloqueado - SOLUCIÓN: Usa un video descargado o stream HLS")
+            print("[INFO] Para descargar el video, ejecuta en Colab:")
+            print(f"       !yt-dlp -f 'best[height<=720]' -o football.mp4 '{youtube_url}'")
+            print("       Luego usa: /content/football.mp4 como Video URL")
+            
+            methods = [
+                {
+                    'name': 'Android TV',
+                    'opts': {
+                        'format': 'best[height<=720]',
+                        'quiet': False,
+                        'no_warnings': False,
+                        'extractor_args': {
+                            'youtube': {
+                                'player_client': ['android_embedded', 'android', 'tv_embedded'],
+                            }
+                        }
+                    }
+                },
+                {
+                    'name': 'iOS',
+                    'opts': {
+                        'format': 'best[height<=720]',
+                        'quiet': False,
+                        'extractor_args': {
+                            'youtube': {
+                                'player_client': ['ios'],
+                            }
+                        }
+                    }
+                },
+                {
+                    'name': 'Web embed',
+                    'opts': {
+                        'format': 'best[height<=720]',
+                        'quiet': False,
+                        'extractor_args': {
+                            'youtube': {
+                                'player_client': ['web_embedded'],
+                            }
+                        }
                     }
                 }
-            }
+            ]
             
-            print("[INFO] Extrayendo URL con yt-dlp (usando cookies de Chrome)...")
+            for method in methods:
+                try:
+                    print(f"[INFO] Intentando método: {method['name']}...")
+                    with yt_dlp.YoutubeDL(method['opts']) as ydl:
+                        info = ydl.extract_info(youtube_url, download=False)
+                        if 'url' in info:
+                            print(f"[SUCCESS] URL extraída con método {method['name']}")
+                            return info['url']
+                        elif 'entries' in info and len(info['entries']) > 0:
+                            return info['entries'][0]['url']
+                except Exception as e:
+                    print(f"[FAIL] Método {method['name']} falló: {str(e)[:100]}")
+                    continue
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(youtube_url, download=False)
-                if 'url' in info:
-                    print(f"[INFO] URL extraída exitosamente")
-                    return info['url']
-                elif 'entries' in info and len(info['entries']) > 0:
-                    return info['entries'][0]['url']
-                else:
-                    print("[ERROR] No se encontró URL en la info extraída")
-                    return None
+            print("[ERROR] Todos los métodos fallaron")
+            return None
         
         except ImportError:
             print("[ERROR] yt-dlp no instalado. Ejecuta: pip install yt-dlp")
             return None
         except Exception as e:
-            print(f"[ERROR] No se pudo obtener URL de YouTube: {e}")
-            print("[INFO] Intentando método alternativo sin cookies...")
-            
-            try:
-                ydl_opts_fallback = {
-                    'format': 'best[ext=mp4]/best',
-                    'quiet': True,
-                    'no_warnings': True,
-                    'extractor_args': {
-                        'youtube': {
-                            'player_client': ['android'],
-                        }
-                    }
-                }
-                with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
-                    info = ydl.extract_info(youtube_url, download=False)
-                    if 'url' in info:
-                        return info['url']
-            except:
-                pass
-            
+            print(f"[ERROR] Error crítico: {e}")
             return None
     
     @staticmethod
