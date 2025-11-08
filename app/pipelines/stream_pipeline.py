@@ -23,8 +23,12 @@ class StreamPipeline:
         self.detector = BallDetector(
             model_path=config['model']['path'],
             confidence_threshold=config['model']['confidence'],
+            iou_threshold=config['model'].get('iou_threshold', 0.45),
             device=config['model'].get('device', 'cuda'),
-            half_precision=config['model'].get('half_precision', True)
+            half_precision=config['model'].get('half_precision', True),
+            imgsz=config['model'].get('imgsz', 640),
+            multi_scale=config['model'].get('multi_scale', False),
+            warmup_iterations=config['model'].get('warmup_iterations', 3)
         )
         
         model_info = self.detector.get_model_info()
@@ -113,12 +117,19 @@ class StreamPipeline:
                     break
                 
                 t_inference_start = time.time()
-                detection = self.detector.predict_ball_only(frame, self.ball_class_id)
+                det_result = self.detector.predict_ball_only(frame, self.ball_class_id, return_candidates=True)
+                if isinstance(det_result, tuple) and len(det_result) == 2 and (
+                    det_result[0] is None or isinstance(det_result[0], tuple)
+                ):
+                    detection, detections_list = det_result
+                else:
+                    detection = det_result
+                    detections_list = None
                 t_inference = (time.time() - t_inference_start) * 1000
                 self.performance_stats['inference_times'].append(t_inference)
                 
                 t_tracking_start = time.time()
-                track_result = self.tracker.update(detection)
+                track_result = self.tracker.update(detection, detections_list)
                 t_tracking = (time.time() - t_tracking_start) * 1000
                 self.performance_stats['tracking_times'].append(t_tracking)
                 

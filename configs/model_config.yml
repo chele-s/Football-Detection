@@ -5,11 +5,11 @@ model:
   device: "cuda"
   half_precision: true
   imgsz: 640
-  multi_scale: false
+  multi_scale: true
   warmup_iterations: 3
   ball_class_id: 0
 
 tracking:
-  max_lost_frames: 10
-  min_confidence: 0.3
+  max_lost_frames: 15
+  min_confidence: 0.1
   history_size: 30

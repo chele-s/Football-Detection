@@ -147,6 +147,11 @@ class BallDetector:
         inference_time = (time.time() - start_time) * 1000
         self.inference_times.append(inference_time)
         
+        if self.stats['total_inferences'] % 20 == 0:
+            n = 0 if detections_sv is None else len(detections_sv)
+            top_conf = 0.0 if n == 0 else float(np.max(detections_sv.confidence))
+            logger.debug(f"Detections: {n} | top_conf: {top_conf:.3f} | thr: {self.confidence_threshold:.3f}")
+
         if return_raw:
             return detections_sv
         
@@ -252,10 +257,10 @@ class BallDetector:
     def _calibrate_confidence(self, conf: float, width: float, height: float) -> float:
         area = width * height
         
-        if area < 100:
-            calibrated = conf * 0.8
-        elif area > 10000:
-            calibrated = conf * 0.9
+        if area < 3000:
+            calibrated = conf * 1.10
+        elif area > 150000:
+            calibrated = conf * 0.95
         else:
             calibrated = conf
         
@@ -265,18 +270,23 @@ class BallDetector:
         self,
         frame: np.ndarray,
         ball_class_id: int = 0,
-        use_temporal_filtering: bool = True
+        use_temporal_filtering: bool = True,
+        return_candidates: bool = False
     ) -> Optional[Tuple[float, float, float, float, float]]:
         detections = self.predict(frame)
         
-        ball_detections = [
-            d for d in detections if d[5] == ball_class_id
-        ]
+        unique_classes = set(d[5] for d in detections) if detections else set()
+        if len(unique_classes) <= 1:
+            ball_detections = detections
+        else:
+            ball_detections = [d for d in detections if d[5] == ball_class_id]
         
         if len(ball_detections) == 0:
             if use_temporal_filtering and len(self.detection_history) > 0:
                 logger.debug("No detection, using temporal prediction")
                 return self._predict_from_history()
+            if return_candidates:
+                return None, detections
             return None
         
         if len(ball_detections) == 1:
@@ -289,6 +299,8 @@ class BallDetector:
         if use_temporal_filtering:
             self.detection_history.append(detection_tuple)
         
+        if return_candidates:
+            return detection_tuple, detections
         return detection_tuple
     
     def _select_best_detection(self, detections: List[Tuple]) -> Tuple:

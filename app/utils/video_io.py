@@ -105,6 +105,11 @@ class FFMPEGWriter:
             '-c:v', codec,
             '-pix_fmt', 'yuv420p',
             '-preset', preset,
+            '-tune', 'zerolatency',
+            '-g', str(int(max(2, fps) * 2)),
+            '-maxrate', bitrate,
+            '-bufsize', bitrate,
+            '-an',
             '-b:v', bitrate,
             '-f', 'flv' if 'rtmp' in output_url else 'mp4',
             output_url
