@@ -347,28 +347,21 @@ def main():
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
-    import base64
-    
-    count = st_autorefresh(interval=100, key="stream_refresh")
+    st_autorefresh(interval=50, key="stream_refresh")
     
     frame = processor.get_frame()
     
     if frame is not None:
         h, w = frame.shape[:2]
-        if w > 960:
-            scale = 960 / w
+        if w > 800:
+            scale = 800 / w
             new_w, new_h = int(w * scale), int(h * scale)
-            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
         
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        frame_b64 = base64.b64encode(buffer).decode()
-        
-        frame_placeholder.markdown(
-            f'<img src="data:image/jpeg;base64,{frame_b64}" style="width:100%;height:auto">',
-            unsafe_allow_html=True
-        )
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
     elif processor.running:
-        frame_placeholder.info("⏳ Loading stream... Please wait (~30 seconds)")
+        frame_placeholder.info("⏳ Loading stream...")
     
     stats = processor.get_stats()
     

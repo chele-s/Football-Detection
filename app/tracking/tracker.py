@@ -170,7 +170,8 @@ class BallTracker:
             if self.is_tracking and self.last_bbox is not None:
                 iou = self._compute_iou(bbox, self.last_bbox)
                 if iou < self.iou_threshold:
-                    logger.warning(f"Low IoU: {iou:.3f}, potential outlier")
+                    if iou > 0.05:
+                        logger.debug(f"Low IoU: {iou:.3f}, potential outlier")
                     if self._is_outlier(x_center, y_center):
                         self.stats['outliers_rejected'] += 1
                         detection = None
