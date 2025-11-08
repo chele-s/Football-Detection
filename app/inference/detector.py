@@ -69,11 +69,15 @@ class BallDetector:
         logger.info("Initializing RF-DETR Medium model...")
         if self.model_path and self.model_path.exists():
             logger.info(f"Loading fine-tuned checkpoint: {self.model_path}")
-            self.model = RFDETRMedium(pretrain_weights=str(self.model_path))
+            self.model = RFDETRMedium(
+                num_classes=1,
+                resolution=self.imgsz,
+                pretrain_weights=str(self.model_path)
+            )
             logger.info("Custom model weights loaded successfully")
         else:
             logger.warning("No custom model found, using COCO pretrained weights")
-            self.model = RFDETRMedium()
+            self.model = RFDETRMedium(resolution=self.imgsz)
         
         if self.device == 'cuda' and torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)

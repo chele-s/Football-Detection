@@ -51,3 +51,4 @@ env.bak/
 venv.bak/
 
 notebooks/.ipynb_checkpoints/
+notebooks/how_to_finetune_rf_detr_on_detection_dataset (2).ipynb
