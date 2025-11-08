@@ -37,6 +37,7 @@ class StreamPipeline:
         self.tracker = BallTracker(
             max_lost_frames=config['tracking']['max_lost_frames'],
             min_confidence=config['tracking']['min_confidence'],
+            iou_threshold=config['tracking'].get('iou_threshold', 0.3),
             adaptive_noise=True
         )
         
