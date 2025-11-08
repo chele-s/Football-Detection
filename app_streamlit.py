@@ -9,7 +9,7 @@ import torch
 
 from app.inference import BallDetector
 from app.tracking import BallTracker
-from app.utils import VideoReader, load_config
+from app.utils import VideoReader, load_config, merge_configs
 from app.camera import VirtualCamera
 
 st.set_page_config(
@@ -205,7 +205,9 @@ class StreamProcessor:
 
 @st.cache_resource
 def load_processor():
-    config = load_config('configs/model_config.yml', 'configs/stream_config.yml')
+    model_config = load_config('configs/model_config.yml')
+    stream_config = load_config('configs/stream_config.yml')
+    config = merge_configs(model_config, stream_config)
     return StreamProcessor(config)
 
 def main():
