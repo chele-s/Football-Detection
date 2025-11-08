@@ -162,6 +162,9 @@ class StreamProcessor:
                     vel = tracker_state['velocity_magnitude']
                     cv2.putText(annotated_frame, f"Vel: {vel:.0f}px/s", (x1, y2+20), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                else:
+                    cv2.putText(annotated_frame, "No ball detected", (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 
                 if track_result:
                     x, y, _ = track_result
@@ -199,7 +202,7 @@ class StreamProcessor:
                 frame_count += 1
                 
                 if frame_count % 30 == 0:
-                    print(f"[STREAM] Processed {frame_count} frames, FPS: {fps:.1f}, Detections: {n_dets}")
+                    print(f"[STREAM] Processed {frame_count} frames, FPS: {fps:.1f}, Detections: {n_dets}, Queue size: {self.frame_queue.qsize()}")
                 
                 if frame_count % 60 == 0:
                     tracker_stats = self.tracker.get_stats()
@@ -234,9 +237,11 @@ class StreamProcessor:
     
     def get_frame(self):
         frame = None
+        count = 0
         while not self.frame_queue.empty():
             try:
                 frame = self.frame_queue.get_nowait()
+                count += 1
             except:
                 break
         return frame
@@ -344,8 +349,7 @@ def main():
     
     import base64
     
-    if processor.running:
-        st_autorefresh(interval=100, key="stream_refresh")
+    count = st_autorefresh(interval=100, key="stream_refresh")
     
     frame = processor.get_frame()
     
