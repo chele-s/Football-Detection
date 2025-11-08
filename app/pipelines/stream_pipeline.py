@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import time
 import logging
+import os
 from typing import Optional, Dict, Any
 from collections import deque
 
@@ -12,13 +13,28 @@ from app.utils import VideoReader, FFMPEGWriter, RTMPClient
 
 logger = logging.getLogger(__name__)
 
+def has_display() -> bool:
+    """Check if display is available for cv2.imshow"""
+    if os.environ.get('DISPLAY') is None and os.name != 'nt':
+        return False
+    try:
+        cv2.namedWindow('test', cv2.WINDOW_NORMAL)
+        cv2.destroyWindow('test')
+        return True
+    except:
+        return False
+
 
 class StreamPipeline:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self._setup_logging()
+        self.display_available = has_display()
         
         logger.info("Initializing StreamPipeline")
+        
+        if not self.display_available:
+            logger.info("No display detected - running in headless mode (cv2.imshow disabled)")
         
         self.detector = BallDetector(
             model_path=config['model']['path'],
@@ -180,7 +196,7 @@ class StreamPipeline:
                 if writer:
                     writer.write(cropped)
                 
-                if self.debug_mode:
+                if self.debug_mode and self.display_available:
                     cv2.imshow('Stream Output', cropped)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         logger.info("Stopped by user")
@@ -208,7 +224,7 @@ class StreamPipeline:
             reader.release()
             if writer:
                 writer.release()
-            if self.debug_mode:
+            if self.debug_mode and self.display_available:
                 cv2.destroyAllWindows()
             
             self._log_final_stats(frame_count)
