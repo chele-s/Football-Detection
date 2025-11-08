@@ -67,21 +67,13 @@ class BallDetector:
         from rfdetr import RFDETRMedium
         
         logger.info("Initializing RF-DETR Medium model...")
-        self.model = RFDETRMedium()
-        
         if self.model_path and self.model_path.exists():
             logger.info(f"Loading fine-tuned checkpoint: {self.model_path}")
-            checkpoint = torch.load(str(self.model_path), map_location='cpu')
-            
-            if isinstance(checkpoint, dict) and 'model' in checkpoint:
-                state_dict = checkpoint['model']
-            else:
-                state_dict = checkpoint
-            
-            self.model.load_state_dict(state_dict, strict=False)
+            self.model = RFDETRMedium(pretrain_weights=str(self.model_path))
             logger.info("Custom model weights loaded successfully")
         else:
             logger.warning("No custom model found, using COCO pretrained weights")
+            self.model = RFDETRMedium()
         
         if self.device == 'cuda' and torch.cuda.is_available():
             self.model = self.model.to('cuda')
