@@ -43,8 +43,8 @@ class StreamProcessor:
         self.virtual_camera = None
         self.ball_class_id = config['model'].get('ball_class_id', 0)
         
-        self.frame_queue = Queue(maxsize=2)
-        self.stats_queue = Queue(maxsize=1)
+        self.frame_queue = Queue(maxsize=3)
+        self.stats_queue = Queue(maxsize=2)
         self.running = False
         self.thread = None
         
@@ -167,13 +167,16 @@ class StreamProcessor:
                 cv2.putText(cropped, f"Inference: {inf_time:.1f}ms", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                if self.frame_queue.full():
+                while self.frame_queue.full():
                     try:
                         self.frame_queue.get_nowait()
                     except:
-                        pass
+                        break
                 
-                self.frame_queue.put(cropped)
+                try:
+                    self.frame_queue.put_nowait(cropped)
+                except:
+                    pass
                 
                 frame_count += 1
                 
@@ -205,9 +208,13 @@ class StreamProcessor:
             traceback.print_exc()
     
     def get_frame(self):
-        if not self.frame_queue.empty():
-            return self.frame_queue.get()
-        return None
+        frame = None
+        while not self.frame_queue.empty():
+            try:
+                frame = self.frame_queue.get_nowait()
+            except:
+                break
+        return frame
     
     def get_stats(self):
         if not self.stats_queue.empty():
@@ -277,11 +284,17 @@ def main():
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
+    last_frame = None
+    
     while True:
         frame = processor.get_frame()
         
         if frame is not None:
+            last_frame = frame
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+        elif last_frame is not None:
+            frame_rgb = cv2.cvtColor(last_frame, cv2.COLOR_BGR2RGB)
             frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
         
         stats = processor.get_stats()
@@ -300,7 +313,11 @@ def main():
                 st.metric("Successful Tracks", stats['successful_tracks'])
                 st.metric("PID Corrections", stats['pid_corrections'])
         
-        time.sleep(0.03)
+        if not processor.running and processor.thread and not processor.thread.is_alive():
+            st.error("Stream processing stopped")
+            break
+        
+        time.sleep(0.01)
 
 if __name__ == "__main__":
     main()

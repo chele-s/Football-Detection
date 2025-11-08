@@ -83,15 +83,20 @@ class BallDetector:
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
             logger.info(f"GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+            
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            logger.info("CUDA optimizations enabled")
         
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
         logger.info("Model optimization complete - ready for inference")
         
-        if hasattr(torch, 'compile'):
+        if hasattr(torch, 'compile') and torch.cuda.is_available():
             try:
                 logger.info("Applying torch.compile for additional speedup...")
-                self.model = torch.compile(self.model, mode='max-autotune')
+                self.model = torch.compile(self.model, mode='reduce-overhead', fullgraph=False)
                 logger.info("torch.compile applied successfully")
             except Exception as e:
                 logger.warning(f"torch.compile failed: {e}")
