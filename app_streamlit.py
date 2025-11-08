@@ -111,28 +111,19 @@ class StreamProcessor:
             print(f"[STREAM] Starting main loop...")
             
             while self.running:
-                print(f"[LOOP] Iteration {frame_count}, reading frame...")
-                
                 try:
                     ret, frame = reader.read()
-                    print(f"[LOOP] Frame read: ret={ret}, frame={'None' if frame is None else frame.shape}")
                 except Exception as e:
-                    print(f"[LOOP] ERROR reading frame: {e}")
+                    print(f"[STREAM] ERROR reading frame: {e}")
                     break
                 
                 if not ret:
-                    print("[STREAM] No more frames (ret=False), stream ended")
+                    print("[STREAM] No more frames, stream ended")
                     break
                 
-                if frame is None:
-                    print("[STREAM] Frame is None, skipping")
+                if frame is None or frame.shape[0] < 100 or frame.shape[1] < 100:
                     continue
                 
-                if frame.shape[0] < 100 or frame.shape[1] < 100:
-                    print(f"[STREAM] Frame too small {frame.shape}, skipping")
-                    continue
-                
-                print(f"[LOOP] Starting inference...")
                 start_inf = time.time()
                 try:
                     det_result = self.detector.predict_ball_only(
@@ -141,9 +132,8 @@ class StreamProcessor:
                         return_candidates=True
                     )
                     inf_time = (time.time() - start_inf) * 1000
-                    print(f"[LOOP] Inference done in {inf_time:.1f}ms")
                 except Exception as e:
-                    print(f"[LOOP] ERROR in inference: {e}")
+                    print(f"[STREAM] ERROR in inference: {e}")
                     import traceback
                     traceback.print_exc()
                     continue
@@ -406,7 +396,11 @@ def main():
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
+    if 'last_frame_time' not in st.session_state:
+        st.session_state.last_frame_time = 0
+    
     frame = processor.get_frame()
+    current_time = time.time()
     
     if frame is not None:
         h, w = frame.shape[:2]
@@ -416,14 +410,18 @@ def main():
             frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
         
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+        frame_placeholder.image(frame_rgb, channels="RGB", width="stretch")
+        st.session_state.last_frame_time = current_time
     elif processor.running:
-        frame_placeholder.info("⏳ Loading stream...")
+        if current_time - st.session_state.last_frame_time < 5:
+            frame_placeholder.info("⏳ Loading stream...")
+        else:
+            frame_placeholder.warning("⚠️ No frames received in 5 seconds")
     else:
         frame_placeholder.info("⚪ Press Start Stream to begin")
     
     if processor.running:
-        time.sleep(0.05)
+        time.sleep(0.1)
         st.rerun()
     
     stats = processor.get_stats()

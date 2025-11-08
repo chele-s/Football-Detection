@@ -115,12 +115,17 @@ class BallDetector:
         dummy_image = Image.fromarray(dummy_frame)
         
         warmup_times = []
-        for i in range(self.warmup_iterations):
-            start = time.time()
-            _ = self.model.predict(dummy_image, threshold=self.confidence_threshold)
-            elapsed = (time.time() - start) * 1000
-            warmup_times.append(elapsed)
-            logger.debug(f"Warmup {i+1}/{self.warmup_iterations}: {elapsed:.2f}ms")
+        with torch.no_grad():
+            for i in range(self.warmup_iterations):
+                start = time.time()
+                _ = self.model.predict(dummy_image, threshold=self.confidence_threshold)
+                elapsed = (time.time() - start) * 1000
+                warmup_times.append(elapsed)
+                logger.debug(f"Warmup {i+1}/{self.warmup_iterations}: {elapsed:.2f}ms")
+        
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
         
         avg_warmup = np.mean(warmup_times)
         logger.info(f"Warmup completed - avg time: {avg_warmup:.2f}ms")
@@ -145,13 +150,17 @@ class BallDetector:
         else:
             image = frame
         
-        if self.multi_scale:
-            detections_sv = self._multi_scale_inference(image)
-        else:
-            detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
+        with torch.no_grad():
+            if self.multi_scale:
+                detections_sv = self._multi_scale_inference(image)
+            else:
+                detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
         
         inference_time = (time.time() - start_time) * 1000
         self.inference_times.append(inference_time)
+        
+        if self.stats['total_inferences'] % 100 == 0 and torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         if self.stats['total_inferences'] % 20 == 0:
             n = 0 if detections_sv is None else len(detections_sv)
