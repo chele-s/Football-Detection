@@ -76,7 +76,6 @@ class BallDetector:
             self.model = RFDETRMedium()
         
         if self.device == 'cuda' and torch.cuda.is_available():
-            self.model = self.model.to('cuda')
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
             logger.info(f"GPU: {gpu_name} ({gpu_memory:.1f}GB)")
