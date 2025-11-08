@@ -92,14 +92,7 @@ class BallDetector:
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
         logger.info("Model optimization complete - ready for inference")
-        
-        if hasattr(torch, 'compile') and torch.cuda.is_available():
-            try:
-                logger.info("Applying torch.compile for additional speedup...")
-                self.model = torch.compile(self.model, mode='reduce-overhead', fullgraph=False)
-                logger.info("torch.compile applied successfully")
-            except Exception as e:
-                logger.warning(f"torch.compile failed: {e}")
+        logger.info("Note: torch.compile skipped - RF-DETR uses its own optimization")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)

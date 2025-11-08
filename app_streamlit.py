@@ -68,15 +68,21 @@ class StreamProcessor:
     
     def _process_stream(self, video_url: str):
         try:
+            print(f"[STREAM] Starting stream processing for: {video_url}")
             input_source = video_url
             
             if RTMPClient.is_youtube_url(video_url):
+                print("[STREAM] Extracting YouTube stream URL...")
                 stream_url = RTMPClient.get_youtube_stream_url(video_url)
                 if stream_url is None:
+                    print("[STREAM] ERROR: Could not extract YouTube URL")
                     return
                 input_source = stream_url
+                print(f"[STREAM] YouTube URL extracted successfully")
             
+            print(f"[STREAM] Opening video source...")
             reader = VideoReader(input_source)
+            print(f"[STREAM] Video source opened: {reader.width}x{reader.height}")
             
             frame_w = reader.width
             frame_h = reader.height
@@ -97,6 +103,8 @@ class StreamProcessor:
             frame_count = 0
             last_time = time.time()
             skip_frames = 0
+            
+            print(f"[STREAM] Starting main loop...")
             
             while self.running:
                 ret, frame = reader.read()
@@ -181,6 +189,9 @@ class StreamProcessor:
                 
                 frame_count += 1
                 
+                if frame_count % 30 == 0:
+                    print(f"[STREAM] Processed {frame_count} frames, FPS: {fps:.1f}, Detections: {n_dets}")
+                
                 if frame_count % 60 == 0:
                     tracker_stats = self.tracker.get_stats()
                     camera_stats = self.virtual_camera.get_stats()
@@ -203,10 +214,14 @@ class StreamProcessor:
                     self.stats_queue.put(stats)
         
             reader.release()
+            print(f"[STREAM] Stream ended normally after {frame_count} frames")
         except Exception as e:
-            print(f"Stream error: {e}")
+            print(f"[STREAM] ERROR: Stream crashed: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            self.running = False
+            print(f"[STREAM] Stream thread exiting")
     
     def get_frame(self):
         frame = None
@@ -252,13 +267,26 @@ def main():
         )
         
         if st.button("Start Stream", type="primary"):
-            processor.detector.set_confidence_threshold(confidence)
-            processor.start(video_url)
-            st.success("Stream started!")
+            if not processor.running:
+                processor.detector.set_confidence_threshold(confidence)
+                processor.start(video_url)
+                st.success("🚀 Stream starting... Wait for video to load")
+            else:
+                st.warning("Stream is already running")
         
         if st.button("Stop Stream"):
             processor.stop()
             st.warning("Stream stopped")
+        
+        st.divider()
+        
+        if processor.running and processor.thread:
+            if processor.thread.is_alive():
+                st.success("🟢 Stream Running")
+            else:
+                st.error("🔴 Stream Crashed")
+        else:
+            st.info("⚪ Stream Not Started")
         
         st.divider()
         
@@ -287,7 +315,8 @@ def main():
     
     import base64
     
-    st_autorefresh(interval=100, key="stream_refresh")
+    if processor.running:
+        st_autorefresh(interval=100, key="stream_refresh")
     
     frame = processor.get_frame()
     
@@ -305,6 +334,8 @@ def main():
             f'<img src="data:image/jpeg;base64,{frame_b64}" style="width:100%;height:auto">',
             unsafe_allow_html=True
         )
+    elif processor.running:
+        frame_placeholder.info("⏳ Loading stream... Please wait (~30 seconds)")
     
     stats = processor.get_stats()
     
