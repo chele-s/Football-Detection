@@ -135,28 +135,38 @@ class StreamProcessor:
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
                 
                 if track_result:
-                    x, y, w, h, conf = track_result
-                    x1 = int(x - w/2)
-                    y1 = int(y - h/2)
-                    x2 = int(x + w/2)
-                    y2 = int(y + h/2)
+                    x, y, is_tracking = track_result
                     
-                    color = (0, 255, 0) if self.tracker.is_tracking else (0, 165, 255)
-                    thickness = 3 if self.tracker.is_tracking else 2
+                    box_size = 40
+                    x1 = int(x - box_size/2)
+                    y1 = int(y - box_size/2)
+                    x2 = int(x + box_size/2)
+                    y2 = int(y + box_size/2)
+                    
+                    color = (0, 255, 0) if is_tracking else (0, 165, 255)
+                    thickness = 3 if is_tracking else 2
                     
                     cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, thickness)
-                    cv2.circle(annotated_frame, (int(x), int(y)), 5, color, -1)
+                    cv2.circle(annotated_frame, (int(x), int(y)), 8, color, -1)
                     
-                    label = f"Ball {conf:.2f}"
+                    tracker_state = self.tracker.get_state()
+                    avg_conf = tracker_state['avg_confidence']
+                    label = f"Ball {avg_conf:.2f}"
                     cv2.putText(annotated_frame, label, (x1, y1-10), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                     
-                    tracker_state = self.tracker.get_state()
                     vel = tracker_state['velocity_magnitude']
                     cv2.putText(annotated_frame, f"Vel: {vel:.0f}px/s", (x1, y2+20), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                 
-                cropped = self.virtual_camera.apply_crop(annotated_frame, track_result)
+                if track_result:
+                    x, y, _ = track_result
+                    crop_coords = self.virtual_camera.update(x, y)
+                    x1, y1, x2, y2 = crop_coords
+                    cropped = annotated_frame[y1:y2, x1:x2]
+                    cropped = cv2.resize(cropped, (1920, 1080))
+                else:
+                    cropped = cv2.resize(annotated_frame, (1920, 1080))
                 
                 fps = 1000 / inf_time if inf_time > 0 else 0
                 self.fps_history.append(fps)
