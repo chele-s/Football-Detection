@@ -284,22 +284,39 @@ def main():
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
-    last_frame = None
+    import base64
+    
+    last_stats = None
+    update_counter = 0
     
     while True:
+        update_counter += 1
+        has_update = False
+        
         frame = processor.get_frame()
         
         if frame is not None:
-            last_frame = frame
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
-        elif last_frame is not None:
-            frame_rgb = cv2.cvtColor(last_frame, cv2.COLOR_BGR2RGB)
-            frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+            has_update = True
+            
+            h, w = frame.shape[:2]
+            if w > 960:
+                scale = 960 / w
+                new_w, new_h = int(w * scale), int(h * scale)
+                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            frame_b64 = base64.b64encode(buffer).decode()
+            
+            frame_placeholder.markdown(
+                f'<img src="data:image/jpeg;base64,{frame_b64}" style="width:100%;height:auto">',
+                unsafe_allow_html=True
+            )
         
         stats = processor.get_stats()
         
-        if stats:
+        if stats and (last_stats is None or stats['frame_count'] != last_stats.get('frame_count', -1)):
+            has_update = True
+            last_stats = stats
             with stats_placeholder.container():
                 st.metric("Frames Processed", f"{stats['frame_count']:,}")
                 st.metric("FPS", f"{stats['avg_fps']:.1f}")
@@ -317,7 +334,11 @@ def main():
             st.error("Stream processing stopped")
             break
         
-        time.sleep(0.01)
+        if has_update:
+            time.sleep(0.01)
+            st.rerun()
+        else:
+            time.sleep(0.1)
 
 if __name__ == "__main__":
     main()
