@@ -53,13 +53,18 @@ class StreamProcessor:
         self.det_history = deque(maxlen=100)
         
     def start(self, video_url: str):
+        print(f"[START] start() method called with URL: {video_url}")
+        print(f"[START] Current running state: {self.running}")
         if self.running:
+            print("[START] Already running, returning")
             return
         
         self.running = True
+        print("[START] Creating thread...")
         self.thread = threading.Thread(target=self._process_stream, args=(video_url,))
         self.thread.daemon = True
         self.thread.start()
+        print(f"[START] Thread started, is_alive: {self.thread.is_alive()}")
         
     def stop(self):
         self.running = False
@@ -301,12 +306,23 @@ def main():
         )
         
         if st.button("Start Stream", type="primary"):
+            print(f"[BUTTON] Start Stream pressed! Video URL: {video_url}")
+            print(f"[BUTTON] Processor running: {processor.running}")
             if not processor.running:
-                processor.detector.set_confidence_threshold(confidence)
-                processor.start(video_url)
-                st.success("🚀 Stream starting... Wait for video to load")
+                try:
+                    processor.detector.set_confidence_threshold(confidence)
+                    print(f"[BUTTON] Starting stream with URL: {video_url}")
+                    processor.start(video_url)
+                    st.success("🚀 Stream starting... Wait for video to load")
+                    print("[BUTTON] Stream start method called successfully")
+                except Exception as e:
+                    st.error(f"Error starting stream: {e}")
+                    print(f"[BUTTON] ERROR: {e}")
+                    import traceback
+                    traceback.print_exc()
             else:
                 st.warning("Stream is already running")
+                print("[BUTTON] Stream already running")
         
         if st.button("Stop Stream"):
             processor.stop()
