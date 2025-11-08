@@ -9,7 +9,7 @@ import torch
 
 from app.inference import BallDetector
 from app.tracking import BallTracker
-from app.utils import VideoReader, RTMPClient, load_config, merge_configs
+from app.utils import VideoReader, RTMPClient, load_config, merge_configs, MJPEGServer
 from app.camera import VirtualCamera
 
 st.set_page_config(
@@ -43,7 +43,9 @@ class StreamProcessor:
         self.virtual_camera = None
         self.ball_class_id = config['model'].get('ball_class_id', 0)
         
-        self.frame_queue = Queue(maxsize=2)
+        self.mjpeg_server = MJPEGServer(port=8554)
+        self.mjpeg_server.start()
+        
         self.stats_queue = Queue(maxsize=1)
         self.running = False
         self.thread = None
@@ -202,16 +204,7 @@ class StreamProcessor:
                 cv2.putText(cropped, f"Inference: {inf_time:.1f}ms", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                while self.frame_queue.full():
-                    try:
-                        self.frame_queue.get_nowait()
-                    except:
-                        break
-                
-                try:
-                    self.frame_queue.put_nowait(cropped)
-                except:
-                    pass
+                self.mjpeg_server.update_frame(cropped)
                 
                 frame_count += 1
                 
@@ -219,7 +212,7 @@ class StreamProcessor:
                     current_time = time.time()
                     elapsed = current_time - last_log_time
                     actual_fps = 30 / elapsed if elapsed > 0 else 0
-                    print(f"[STREAM] Processed {frame_count} frames, Actual FPS: {actual_fps:.1f}, Inf: {inf_time:.1f}ms, Loop: {loop_time:.1f}ms, Queue: {self.frame_queue.qsize()}")
+                    print(f"[STREAM] Processed {frame_count} frames, Actual FPS: {actual_fps:.1f}, Inf: {inf_time:.1f}ms, Loop: {loop_time:.1f}ms")
                     last_log_time = current_time
                 
                 if frame_count % 60 == 0:
@@ -252,17 +245,6 @@ class StreamProcessor:
         finally:
             self.running = False
             print(f"[STREAM] Stream thread exiting")
-    
-    def get_frame(self):
-        frame = None
-        count = 0
-        while not self.frame_queue.empty():
-            try:
-                frame = self.frame_queue.get_nowait()
-                count += 1
-            except:
-                break
-        return frame
     
     def get_stats(self):
         if not self.stats_queue.empty():
@@ -398,41 +380,24 @@ def main():
     
     with col1:
         st.subheader("Live Stream")
-        frame_placeholder = st.empty()
+        if processor.running:
+            video_html = f"""
+            <div style="width: 100%; height: auto; background: #000; border-radius: 8px; overflow: hidden;">
+                <img src="http://localhost:8554/stream.mjpg" 
+                     style="width: 100%; height: auto; display: block;"
+                     alt="Live video stream">
+            </div>
+            """
+            st.markdown(video_html, unsafe_allow_html=True)
+        else:
+            st.info("⚪ Press Start Stream to begin")
     
     with col2:
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
-    if 'last_frame_time' not in st.session_state:
-        st.session_state.last_frame_time = 0
-    if 'frame_counter' not in st.session_state:
-        st.session_state.frame_counter = 0
-    
-    frame = processor.get_frame()
-    current_time = time.time()
-    
-    if frame is not None:
-        h, w = frame.shape[:2]
-        if w > 1280:
-            scale = 1280 / w
-            new_w, new_h = int(w * scale), int(h * scale)
-            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_placeholder.image(frame_rgb, channels="RGB", width="stretch")
-        st.session_state.last_frame_time = current_time
-        st.session_state.frame_counter += 1
-    elif processor.running:
-        if current_time - st.session_state.last_frame_time < 5:
-            frame_placeholder.info("⏳ Loading stream...")
-        else:
-            frame_placeholder.warning("⚠️ No frames received in 5 seconds")
-    else:
-        frame_placeholder.info("⚪ Press Start Stream to begin")
-    
     if processor.running:
-        time.sleep(0.15)
+        time.sleep(1)
         st.rerun()
     
     stats = processor.get_stats()
