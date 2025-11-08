@@ -288,7 +288,13 @@ class BallTracker:
         best_distance = float('inf')
         
         for det in detections:
-            x, y, w, h, conf = det
+            if len(det) == 6:
+                x, y, w, h, conf, cls_id = det
+                det_tuple = (x, y, w, h, conf)
+            else:
+                x, y, w, h, conf = det
+                det_tuple = det
+            
             if conf < self.min_confidence:
                 continue
             
@@ -296,7 +302,7 @@ class BallTracker:
             
             if distance < best_distance and distance < 100:
                 best_distance = distance
-                best_detection = det
+                best_detection = det_tuple
         
         return best_detection
     
