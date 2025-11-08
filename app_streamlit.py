@@ -43,8 +43,8 @@ class StreamProcessor:
         self.virtual_camera = None
         self.ball_class_id = config['model'].get('ball_class_id', 0)
         
-        self.frame_queue = Queue(maxsize=3)
-        self.stats_queue = Queue(maxsize=2)
+        self.frame_queue = Queue(maxsize=2)
+        self.stats_queue = Queue(maxsize=1)
         self.running = False
         self.thread = None
         
@@ -432,7 +432,7 @@ def main():
         frame_placeholder.info("⚪ Press Start Stream to begin")
     
     if processor.running:
-        time.sleep(0.2)
+        time.sleep(0.15)
         st.rerun()
     
     stats = processor.get_stats()
