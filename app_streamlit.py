@@ -107,10 +107,13 @@ class StreamProcessor:
             frame_count = 0
             last_time = time.time()
             skip_frames = 0
+            last_log_time = time.time()
             
             print(f"[STREAM] Starting main loop...")
             
             while self.running:
+                loop_start = time.time()
+                
                 try:
                     ret, frame = reader.read()
                 except Exception as e:
@@ -181,11 +184,12 @@ class StreamProcessor:
                     crop_coords = self.virtual_camera.update(x, y)
                     x1, y1, x2, y2 = crop_coords
                     cropped = annotated_frame[y1:y2, x1:x2]
-                    cropped = cv2.resize(cropped, (1280, 720), interpolation=cv2.INTER_LINEAR)
+                    cropped = cv2.resize(cropped, (1280, 720), interpolation=cv2.INTER_AREA)
                 else:
-                    cropped = cv2.resize(annotated_frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
+                    cropped = cv2.resize(annotated_frame, (1280, 720), interpolation=cv2.INTER_AREA)
                 
-                fps = 1000 / inf_time if inf_time > 0 else 0
+                loop_time = (time.time() - loop_start) * 1000
+                fps = 1000 / loop_time if loop_time > 0 else 0
                 self.fps_history.append(fps)
                 
                 n_dets = len(detections_list) if detections_list else 0
@@ -212,7 +216,11 @@ class StreamProcessor:
                 frame_count += 1
                 
                 if frame_count % 30 == 0:
-                    print(f"[STREAM] Processed {frame_count} frames, FPS: {fps:.1f}, Detections: {n_dets}, Queue size: {self.frame_queue.qsize()}")
+                    current_time = time.time()
+                    elapsed = current_time - last_log_time
+                    actual_fps = 30 / elapsed if elapsed > 0 else 0
+                    print(f"[STREAM] Processed {frame_count} frames, Actual FPS: {actual_fps:.1f}, Inf: {inf_time:.1f}ms, Loop: {loop_time:.1f}ms, Queue: {self.frame_queue.qsize()}")
+                    last_log_time = current_time
                 
                 if frame_count % 60 == 0:
                     tracker_stats = self.tracker.get_stats()
@@ -398,20 +406,23 @@ def main():
     
     if 'last_frame_time' not in st.session_state:
         st.session_state.last_frame_time = 0
+    if 'frame_counter' not in st.session_state:
+        st.session_state.frame_counter = 0
     
     frame = processor.get_frame()
     current_time = time.time()
     
     if frame is not None:
         h, w = frame.shape[:2]
-        if w > 800:
-            scale = 800 / w
+        if w > 1280:
+            scale = 1280 / w
             new_w, new_h = int(w * scale), int(h * scale)
-            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_placeholder.image(frame_rgb, channels="RGB", width="stretch")
         st.session_state.last_frame_time = current_time
+        st.session_state.frame_counter += 1
     elif processor.running:
         if current_time - st.session_state.last_frame_time < 5:
             frame_placeholder.info("⏳ Loading stream...")
@@ -421,7 +432,7 @@ def main():
         frame_placeholder.info("⚪ Press Start Stream to begin")
     
     if processor.running:
-        time.sleep(0.1)
+        time.sleep(0.2)
         st.rerun()
     
     stats = processor.get_stats()
