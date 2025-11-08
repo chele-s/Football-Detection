@@ -287,11 +287,7 @@ def main():
     
     import base64
     
-    if 'last_stats' not in st.session_state:
-        st.session_state['last_stats'] = None
-    
-    refresh_interval = 100 if processor.running else 1000
-    st_autorefresh(interval=refresh_interval, key="rf_live_refresh")
+    st_autorefresh(interval=100, key="stream_refresh")
     
     frame = processor.get_frame()
     
@@ -312,8 +308,7 @@ def main():
     
     stats = processor.get_stats()
     
-    if stats and (st.session_state['last_stats'] is None or stats['frame_count'] != st.session_state['last_stats'].get('frame_count', -1)):
-        st.session_state['last_stats'] = stats
+    if stats:
         with stats_placeholder.container():
             st.metric("Frames Processed", f"{stats['frame_count']:,}")
             st.metric("FPS", f"{stats['avg_fps']:.1f}")
