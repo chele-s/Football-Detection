@@ -5,7 +5,7 @@ stream:
   bitrate: "4000k"
   preset: "ultrafast"
   show_stats: true
-  debug_mode: true
+  debug_mode: false
 
 output:
   width: 1920
