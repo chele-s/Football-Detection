@@ -83,8 +83,8 @@ class StreamProcessor:
             self.virtual_camera = VirtualCamera(
                 frame_width=frame_w,
                 frame_height=frame_h,
-                output_width=1920,
-                output_height=1080,
+                output_width=1280,
+                output_height=720,
                 dead_zone_percent=0.10,
                 anticipation_factor=0.3,
                 zoom_padding=1.5,
@@ -95,6 +95,7 @@ class StreamProcessor:
             
             frame_count = 0
             last_time = time.time()
+            skip_frames = 0
             
             while self.running:
                 ret, frame = reader.read()
@@ -117,22 +118,7 @@ class StreamProcessor:
                 
                 track_result = self.tracker.update(detection, detections_list)
                 
-                annotated_frame = frame.copy()
-                
-                if detections_list:
-                    for det in detections_list:
-                        x, y, w, h = det[0], det[1], det[2], det[3]
-                        conf = det[4]
-                        
-                        x1 = int(x - w/2)
-                        y1 = int(y - h/2)
-                        x2 = int(x + w/2)
-                        y2 = int(y + h/2)
-                        
-                        color = (100, 100, 100)
-                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 1)
-                        cv2.putText(annotated_frame, f"{conf:.2f}", (x1, y1-5), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                annotated_frame = frame
                 
                 if track_result:
                     x, y, is_tracking = track_result
@@ -164,9 +150,9 @@ class StreamProcessor:
                     crop_coords = self.virtual_camera.update(x, y)
                     x1, y1, x2, y2 = crop_coords
                     cropped = annotated_frame[y1:y2, x1:x2]
-                    cropped = cv2.resize(cropped, (1920, 1080))
+                    cropped = cv2.resize(cropped, (1280, 720), interpolation=cv2.INTER_LINEAR)
                 else:
-                    cropped = cv2.resize(annotated_frame, (1920, 1080))
+                    cropped = cv2.resize(annotated_frame, (1280, 720), interpolation=cv2.INTER_LINEAR)
                 
                 fps = 1000 / inf_time if inf_time > 0 else 0
                 self.fps_history.append(fps)
@@ -191,7 +177,7 @@ class StreamProcessor:
                 
                 frame_count += 1
                 
-                if frame_count % 20 == 0:
+                if frame_count % 60 == 0:
                     tracker_stats = self.tracker.get_stats()
                     camera_stats = self.virtual_camera.get_stats()
                     
