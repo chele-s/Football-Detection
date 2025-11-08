@@ -277,25 +277,38 @@ def main():
         stream_option = st.selectbox(
             "Fuente de video",
             [
-                "Custom URL",
+                "Local File",
                 "Test Stream 1 (Mux)",
                 "Test Stream 2 (Akamai)",
-                "Local File"
-            ]
+                "Custom URL"
+            ],
+            index=0
         )
         
-        if stream_option == "Test Stream 1 (Mux)":
+        if stream_option == "Local File":
+            video_url = st.text_input(
+                "Ruta del archivo", 
+                value="/content/football.mp4",
+                key="local_file_input"
+            )
+            st.caption(f"📁 Usando: {video_url}")
+        elif stream_option == "Test Stream 1 (Mux)":
             video_url = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+            st.caption("🌐 Stream de prueba Mux")
         elif stream_option == "Test Stream 2 (Akamai)":
             video_url = "https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8"
-        elif stream_option == "Local File":
-            video_url = st.text_input("Ruta del archivo", value="/content/football.mp4")
+            st.caption("🌐 Stream de prueba Akamai")
         else:
             video_url = st.text_input(
                 "Video URL",
-                value="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                help="YouTube URL, local file path, or stream URL"
+                value="",
+                help="YouTube URL, local file path, or stream URL",
+                key="custom_url_input"
             )
+        
+        if not video_url or video_url.strip() == "":
+            video_url = "/content/football.mp4"
+            st.warning("⚠️ URL vacía, usando video por defecto")
         
         confidence = st.slider(
             "Confidence Threshold",
@@ -305,28 +318,43 @@ def main():
             step=0.01
         )
         
-        if st.button("Start Stream", type="primary"):
-            print(f"[BUTTON] Start Stream pressed! Video URL: {video_url}")
+        st.divider()
+        
+        start_button = st.button("▶️ Start Stream", type="primary", use_container_width=True)
+        stop_button = st.button("⏹️ Stop Stream", use_container_width=True)
+        
+        if start_button:
+            print(f"[BUTTON] Start Stream pressed!")
+            print(f"[BUTTON] Stream option: {stream_option}")
+            print(f"[BUTTON] Video URL: '{video_url}'")
+            print(f"[BUTTON] Video URL type: {type(video_url)}")
+            print(f"[BUTTON] Video URL length: {len(video_url) if video_url else 0}")
             print(f"[BUTTON] Processor running: {processor.running}")
-            if not processor.running:
+            
+            if not video_url or video_url.strip() == "":
+                st.error("❌ Error: No video URL specified")
+                print("[BUTTON] ERROR: Empty video URL")
+            elif not processor.running:
                 try:
                     processor.detector.set_confidence_threshold(confidence)
                     print(f"[BUTTON] Starting stream with URL: {video_url}")
                     processor.start(video_url)
-                    st.success("🚀 Stream starting... Wait for video to load")
+                    st.success(f"🚀 Stream iniciado: {video_url[:50]}...")
                     print("[BUTTON] Stream start method called successfully")
                 except Exception as e:
-                    st.error(f"Error starting stream: {e}")
+                    st.error(f"❌ Error: {e}")
                     print(f"[BUTTON] ERROR: {e}")
                     import traceback
                     traceback.print_exc()
             else:
-                st.warning("Stream is already running")
+                st.warning("⚠️ Stream ya está corriendo")
                 print("[BUTTON] Stream already running")
         
-        if st.button("Stop Stream"):
+        if stop_button:
+            print("[BUTTON] Stop Stream pressed")
             processor.stop()
-            st.warning("Stream stopped")
+            st.warning("⏹️ Stream detenido")
+            print("[BUTTON] Stream stopped")
         
         st.divider()
         
