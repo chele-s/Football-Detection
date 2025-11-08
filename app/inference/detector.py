@@ -66,26 +66,32 @@ class BallDetector:
         
         from rfdetr import RFDETRMedium
         
+        logger.info("Initializing RF-DETR Medium model...")
+        self.model = RFDETRMedium()
+        
         if self.model_path and self.model_path.exists():
-            logger.info(f"Loading custom RF-DETR model from {self.model_path}")
-            self.model = RFDETRMedium()
-            checkpoint = torch.load(str(self.model_path), map_location=self.device)
-            self.model.load_state_dict(checkpoint['model'] if 'model' in checkpoint else checkpoint)
-        else:
-            logger.info("Loading pretrained RF-DETR Medium on COCO")
-            self.model = RFDETRMedium()
-        
-        if self.device == 'cuda':
-            self.model = self.model.to('cuda')
+            logger.info(f"Loading fine-tuned checkpoint: {self.model_path}")
+            checkpoint = torch.load(str(self.model_path), map_location='cpu')
             
-            if torch.cuda.is_available():
-                gpu_name = torch.cuda.get_device_name(0)
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-                logger.info(f"GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+            if isinstance(checkpoint, dict) and 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+            
+            self.model.load_state_dict(state_dict, strict=False)
+            logger.info("Custom model weights loaded successfully")
+        else:
+            logger.warning("No custom model found, using COCO pretrained weights")
         
-        logger.info("Optimizing model for inference...")
+        if self.device == 'cuda' and torch.cuda.is_available():
+            self.model = self.model.to('cuda')
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+            logger.info(f"GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+        
+        logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
-        logger.info("Model optimization complete")
+        logger.info("Model optimization complete - ready for inference")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
