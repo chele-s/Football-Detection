@@ -81,11 +81,16 @@ class StreamProcessor:
             frame_h = reader.height
             
             self.virtual_camera = VirtualCamera(
-                input_size=(frame_w, frame_h),
-                output_size=(1920, 1080),
-                smoothing_factor=0.15,
-                zoom_speed=0.1,
-                max_zoom=3.0
+                frame_width=frame_w,
+                frame_height=frame_h,
+                output_width=1920,
+                output_height=1080,
+                dead_zone_percent=0.10,
+                anticipation_factor=0.3,
+                zoom_padding=1.5,
+                smoothing_freq=20.0,
+                use_pid=True,
+                prediction_steps=5
             )
             
             frame_count = 0
