@@ -9,7 +9,7 @@ import torch
 
 from app.inference import BallDetector
 from app.tracking import BallTracker
-from app.utils import VideoReader, load_config, merge_configs
+from app.utils import VideoReader, RTMPClient, load_config, merge_configs
 from app.camera import VirtualCamera
 
 st.set_page_config(
@@ -66,7 +66,15 @@ class StreamProcessor:
             self.thread.join(timeout=2)
     
     def _process_stream(self, video_url: str):
-        reader = VideoReader(video_url)
+        input_source = video_url
+        
+        if RTMPClient.is_youtube_url(video_url):
+            stream_url = RTMPClient.get_youtube_stream_url(video_url)
+            if stream_url is None:
+                return
+            input_source = stream_url
+        
+        reader = VideoReader(input_source)
         
         if not reader.is_opened():
             return
