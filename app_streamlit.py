@@ -109,7 +109,16 @@ class StreamProcessor:
             while self.running:
                 ret, frame = reader.read()
                 if not ret:
+                    print("[STREAM] No more frames (ret=False), stream ended")
                     break
+                
+                if frame is None:
+                    print("[STREAM] Frame is None, skipping")
+                    continue
+                
+                if frame.shape[0] < 100 or frame.shape[1] < 100:
+                    print(f"[STREAM] Frame too small {frame.shape}, skipping")
+                    continue
                 
                 start_inf = time.time()
                 det_result = self.detector.predict_ball_only(
@@ -251,12 +260,32 @@ def main():
     processor = load_processor()
     
     with st.sidebar:
-        st.header("Configuration")
+        st.title("Configuration")
         
-        video_url = st.text_input(
-            "Video URL",
-            value="https://www.youtube.com/watch?v=pbuU3zTfyQI"
+        st.info("💡 YouTube bloqueado. Usa videos locales o estos streams de prueba:")
+        
+        stream_option = st.selectbox(
+            "Fuente de video",
+            [
+                "Custom URL",
+                "Test Stream 1 (Mux)",
+                "Test Stream 2 (Akamai)",
+                "Local File"
+            ]
         )
+        
+        if stream_option == "Test Stream 1 (Mux)":
+            video_url = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+        elif stream_option == "Test Stream 2 (Akamai)":
+            video_url = "https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8"
+        elif stream_option == "Local File":
+            video_url = st.text_input("Ruta del archivo", value="/content/football.mp4")
+        else:
+            video_url = st.text_input(
+                "Video URL",
+                value="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                help="YouTube URL, local file path, or stream URL"
+            )
         
         confidence = st.slider(
             "Confidence Threshold",
