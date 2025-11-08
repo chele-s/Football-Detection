@@ -22,20 +22,58 @@ class RTMPClient:
             import yt_dlp
             
             ydl_opts = {
-                'format': 'best[ext=mp4]',
+                'format': 'best[ext=mp4]/best',
                 'quiet': True,
-                'no_warnings': True
+                'no_warnings': True,
+                'cookiesfrombrowser': ('chrome',),
+                'extract_flat': False,
+                'nocheckcertificate': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                        'skip': ['hls', 'dash']
+                    }
+                }
             }
+            
+            print("[INFO] Extrayendo URL con yt-dlp (usando cookies de Chrome)...")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=False)
-                return info['url']
+                if 'url' in info:
+                    print(f"[INFO] URL extraída exitosamente")
+                    return info['url']
+                elif 'entries' in info and len(info['entries']) > 0:
+                    return info['entries'][0]['url']
+                else:
+                    print("[ERROR] No se encontró URL en la info extraída")
+                    return None
         
         except ImportError:
             print("[ERROR] yt-dlp no instalado. Ejecuta: pip install yt-dlp")
             return None
         except Exception as e:
             print(f"[ERROR] No se pudo obtener URL de YouTube: {e}")
+            print("[INFO] Intentando método alternativo sin cookies...")
+            
+            try:
+                ydl_opts_fallback = {
+                    'format': 'best[ext=mp4]/best',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android'],
+                        }
+                    }
+                }
+                with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
+                    info = ydl.extract_info(youtube_url, download=False)
+                    if 'url' in info:
+                        return info['url']
+            except:
+                pass
+            
             return None
     
     @staticmethod
