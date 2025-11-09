@@ -123,7 +123,7 @@ def main():
                 x, y, is_tracking = track_result
                 crop_coords = virtual_camera.update(x, y, time.time())
             else:
-                crop_coords = virtual_camera.get_default_view()
+                crop_coords = virtual_camera.get_current_crop()
             
             # Crop frame
             x1, y1, x2, y2 = crop_coords
