@@ -299,7 +299,10 @@ class BallDetector:
         if len(ball_detections) == 0:
             if use_temporal_filtering and len(self.detection_history) > 0:
                 logger.debug("No detection, using temporal prediction")
-                return self._predict_from_history()
+                predicted = self._predict_from_history()
+                if return_candidates:
+                    return predicted, detections
+                return predicted
             if return_candidates:
                 return None, detections
             return None
