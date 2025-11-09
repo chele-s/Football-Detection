@@ -69,14 +69,14 @@ def main():
         frame_height=reader.height,
         output_width=base_output_width,
         output_height=base_output_height,
-        dead_zone_percent=camera_config.get('dead_zone', 0.20),  # Larger dead zone = smoother, less jittery
-        anticipation_factor=camera_config.get('anticipation', 0.2),  # Low anticipation = more natural
-        zoom_padding=camera_config.get('zoom_padding', 1.3),  # Some padding for context
+        dead_zone_percent=camera_config.get('dead_zone', 0.10),  # Small dead zone = responsive following
+        anticipation_factor=camera_config.get('anticipation', 0.3),  # Moderate anticipation
+        zoom_padding=camera_config.get('zoom_padding', 1.2),  # Less padding for tighter frame
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.5),  # More smoothing = less jitter
-        smoothing_beta=camera_config.get('smoothing_beta', 0.01),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.0),  # Less smoothing = more responsive
+        smoothing_beta=camera_config.get('smoothing_beta', 0.007),
         use_pid=True,  # Enable PID control for smooth tracking
-        prediction_steps=3  # Less prediction = more natural following
+        prediction_steps=5  # Some prediction for smooth movement
     )
     print(f"   → Camera config: {base_output_width}x{base_output_height} base crop")
     print(f"   → Professional cameraman mode: Smooth zoom when tracking ball")
@@ -95,12 +95,12 @@ def main():
     detection_count = 0
     lost_count = 0
     
-    # Progressive zoom system
+    # Fast zoom system
     current_zoom_level = 1.0  # 1.0 = no zoom (base size)
     target_zoom_level = 1.0
-    zoom_transition_speed = 0.05  # Smooth zoom transitions
+    zoom_transition_speed = 0.75  # FAST zoom - reaches max in 2 frames
     max_zoom_level = 2.5  # Maximum 2.5x zoom when fully locked on ball
-    frames_tracking = 0  # Count consecutive tracking frames
+    frames_tracking = 0  # Count consecutive REAL tracking frames (not prediction)
     frames_required_for_zoom = 15  # Need 15 frames (0.5s @ 30fps) before zooming
     
     try:
@@ -147,13 +147,12 @@ def main():
                 if is_tracking:
                     frames_tracking += 1
                 else:
-                    frames_tracking = max(0, frames_tracking - 2)  # Decay faster when predicting
+                    # RESET counter when predicting - only real tracking counts
+                    frames_tracking = 0
                 
-                # Progressive zoom: only zoom in when consistently tracking
+                # Direct zoom: snap to max zoom when threshold reached
                 if frames_tracking >= frames_required_for_zoom:
-                    # Gradually increase zoom up to max
-                    zoom_progress = min((frames_tracking - frames_required_for_zoom) / 30.0, 1.0)
-                    target_zoom_level = 1.0 + (max_zoom_level - 1.0) * zoom_progress
+                    target_zoom_level = max_zoom_level  # Direct to max zoom
                 else:
                     # Not enough tracking frames yet - stay at base zoom
                     target_zoom_level = 1.0
@@ -164,11 +163,13 @@ def main():
                 frames_tracking = 0
                 target_zoom_level = 1.0  # Zoom out to base view
             
-            # Smooth zoom transition
+            # Fast zoom transition (2 frames)
             if abs(current_zoom_level - target_zoom_level) > 0.01:
                 if current_zoom_level < target_zoom_level:
+                    # Zoom IN fast
                     current_zoom_level = min(current_zoom_level + zoom_transition_speed, target_zoom_level)
                 else:
+                    # Zoom OUT fast
                     current_zoom_level = max(current_zoom_level - zoom_transition_speed, target_zoom_level)
             
             # Apply progressive zoom by adjusting crop size
@@ -291,10 +292,18 @@ def main():
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, zoom_color, 2)
             
             # Show tracking confidence
-            if frames_tracking > 0:
-                track_text = f"Lock: {min(frames_tracking, frames_required_for_zoom)}/{frames_required_for_zoom}"
-                cv2.putText(cropped, track_text, (cropped.shape[1] - 150, 60), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            if track_result:
+                x, y, is_tracking = track_result
+                if is_tracking and frames_tracking > 0:
+                    # Active tracking - show progress
+                    track_color = (0, 255, 0) if frames_tracking >= frames_required_for_zoom else (255, 255, 0)
+                    track_text = f"Lock: {min(frames_tracking, frames_required_for_zoom)}/{frames_required_for_zoom}"
+                    cv2.putText(cropped, track_text, (cropped.shape[1] - 150, 60), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, track_color, 2)
+                elif not is_tracking:
+                    # Predicting - show warning
+                    cv2.putText(cropped, "PRED (0/15)", (cropped.shape[1] - 150, 60), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
             # Upscale for better visibility - 854x480 target
             display_frame = cv2.resize(cropped, (854, 480), interpolation=cv2.INTER_LINEAR)
