@@ -4,11 +4,44 @@ import numpy as np
 import time
 import torch
 from pathlib import Path
+import math
 
 from app.inference import BallDetector
 from app.tracking import BallTracker
 from app.utils import VideoReader, load_config, merge_configs, MJPEGServer
 from app.camera import VirtualCamera
+
+
+class SmoothZoom:
+    def __init__(self, min_zoom: float = 1.0, max_zoom: float = 2.5, stiffness: float = 0.08, damping: float = 0.35, max_rate: float = 0.25):
+        self.min_zoom = min_zoom
+        self.max_zoom = max_zoom
+        self.k = stiffness
+        self.c = damping
+        self.max_rate = max_rate
+        self.z = min_zoom
+        self.v = 0.0
+        self.target = min_zoom
+
+    def set_target(self, target: float):
+        self.target = max(self.min_zoom, min(self.max_zoom, target))
+
+    def update(self) -> float:
+        e = self.target - self.z
+        a = self.k * e - self.c * self.v
+        self.v += a
+        if self.v > self.max_rate:
+            self.v = self.max_rate
+        elif self.v < -self.max_rate:
+            self.v = -self.max_rate
+        self.z += self.v
+        if self.z < self.min_zoom:
+            self.z = self.min_zoom
+            self.v = 0.0
+        elif self.z > self.max_zoom:
+            self.z = self.max_zoom
+            self.v = 0.0
+        return self.z
 
 def main():
     print("="*60)
@@ -96,12 +129,19 @@ def main():
     lost_count = 0
     
     # Fast zoom system
-    current_zoom_level = 1.0  # 1.0 = no zoom (base size)
+    current_zoom_level = 1.0
     target_zoom_level = 1.0
-    zoom_transition_speed = 0.75  # FAST zoom - reaches max in 2 frames
-    max_zoom_level = 2.5  # Maximum 2.5x zoom when fully locked on ball
-    frames_tracking = 0  # Count consecutive REAL tracking frames (not prediction)
-    frames_required_for_zoom = 15  # Need 15 frames (0.5s @ 30fps) before zooming
+    max_zoom_level = 2.5
+    frames_tracking = 0
+    frames_required_for_zoom = 15
+
+    zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.085, damping=0.42, max_rate=0.18)
+    diag = int(math.hypot(reader.width, reader.height))
+    stable_step_px = max(8, int(diag * 0.010))
+    jump_reset_px = max(40, int(diag * 0.060))
+    cooldown_max = 18
+    cooldown = 0
+    last_stable = None
     
     try:
         while True:
@@ -134,27 +174,52 @@ def main():
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
                 virtual_camera.reset()
-                crop_coords = virtual_camera.update(x, y, time.time())
+                last_stable = (x, y)
+                crop_coords = virtual_camera.update(x, y, time.time(), velocity_hint=tracker.get_velocity())
                 camera_initialized = True
                 print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
             elif track_result:
                 x, y, is_tracking = track_result
-                crop_coords = virtual_camera.update(x, y, time.time())
+                state = tracker.get_state()
+                vmag = state['velocity_magnitude'] if state else 0.0
+                kalman_ok = state['kalman_stable'] if state else True
+                if last_stable is None:
+                    last_stable = (x, y)
+                use_x, use_y = x, y
+
+                if is_tracking and kalman_ok and cooldown == 0:
+                    d = math.hypot(x - last_stable[0], y - last_stable[1])
+                    if d > jump_reset_px:
+                        cooldown = cooldown_max
+                        frames_tracking = 0
+                        use_x, use_y = last_stable
+                    else:
+                        if d <= stable_step_px:
+                            frames_tracking += 1
+                            a = 0.2
+                            last_stable = (last_stable[0] * (1 - a) + x * a, last_stable[1] * (1 - a) + y * a)
+                        else:
+                            frames_tracking = max(frames_tracking - 1, 0)
+                else:
+                    if cooldown > 0:
+                        cooldown -= 1
+                        use_x, use_y = last_stable if last_stable else (x, y)
+                    frames_tracking = 0 if not is_tracking else frames_tracking
+
+                crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=tracker.get_velocity())
                 detection_count += 1
                 lost_count = 0
-                
-                # Count frames with active tracking (not prediction)
-                if is_tracking:
-                    frames_tracking += 1
-                else:
-                    # RESET counter when predicting - only real tracking counts
-                    frames_tracking = 0
-                
-                # Direct zoom: snap to max zoom when threshold reached
+
                 if frames_tracking >= frames_required_for_zoom:
-                    target_zoom_level = max_zoom_level  # Direct to max zoom
+                    if vmag > 900:
+                        target_zoom_level = 1.35
+                    elif vmag > 600:
+                        target_zoom_level = 1.55
+                    elif vmag > 350:
+                        target_zoom_level = 1.80
+                    else:
+                        target_zoom_level = 2.20
                 else:
-                    # Not enough tracking frames yet - stay at base zoom
                     target_zoom_level = 1.0
             else:
                 # No tracking - keep current position and zoom out
@@ -164,13 +229,8 @@ def main():
                 target_zoom_level = 1.0  # Zoom out to base view
             
             # Fast zoom transition (2 frames)
-            if abs(current_zoom_level - target_zoom_level) > 0.01:
-                if current_zoom_level < target_zoom_level:
-                    # Zoom IN fast
-                    current_zoom_level = min(current_zoom_level + zoom_transition_speed, target_zoom_level)
-                else:
-                    # Zoom OUT fast
-                    current_zoom_level = max(current_zoom_level - zoom_transition_speed, target_zoom_level)
+            zoom.set_target(target_zoom_level)
+            current_zoom_level = zoom.update()
             
             # Apply progressive zoom by adjusting crop size
             x1, y1, x2, y2 = crop_coords
