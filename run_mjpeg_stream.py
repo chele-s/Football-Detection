@@ -102,14 +102,14 @@ def main():
         frame_height=reader.height,
         output_width=base_output_width,
         output_height=base_output_height,
-        dead_zone_percent=camera_config.get('dead_zone', 0.10),  # Small dead zone = responsive following
-        anticipation_factor=camera_config.get('anticipation', 0.3),  # Moderate anticipation
-        zoom_padding=camera_config.get('zoom_padding', 1.2),  # Less padding for tighter frame
+        dead_zone_percent=0.06,
+        anticipation_factor=0.4,
+        zoom_padding=camera_config.get('zoom_padding', 1.2),
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.0),  # Less smoothing = more responsive
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.0),
         smoothing_beta=camera_config.get('smoothing_beta', 0.007),
-        use_pid=True,  # Enable PID control for smooth tracking
-        prediction_steps=5  # Some prediction for smooth movement
+        use_pid=True,
+        prediction_steps=5
     )
     print(f"   → Camera config: {base_output_width}x{base_output_height} base crop")
     print(f"   → Professional cameraman mode: Smooth zoom when tracking ball")
@@ -133,27 +133,30 @@ def main():
     target_zoom_level = 1.0
     max_zoom_level = 2.5
     frames_tracking = 0
-    frames_required_for_zoom = 6
+    frames_required_for_zoom = 4
 
     zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.085, damping=0.42, max_rate=0.16)
     diag = int(math.hypot(reader.width, reader.height))
-    stable_step_px = max(6, int(diag * 0.025))
+    stable_step_px = max(6, int(diag * 0.030))
     jump_reset_px = max(36, int(diag * 0.050))
     cooldown_max = 18
     cooldown = 0
     last_stable = None
     stability_score = 0.0
     anchor = None
-    max_pan_step = max(10, int(diag * 0.016))
+    max_pan_step = max(10, int(diag * 0.022))
     anchor_ready_px = max(28, int(diag * 0.055))
     zoom_lock_count = 0
-    zoom_lock_max = 24
+    zoom_lock_max = 36
     hold_zoom_level = 1.0
     last_raw = None
     last_vec = (0.0, 0.0)
     natural_counter = 0
     natural_step_px = max(10, int(diag * 0.020))
     min_dir_cos = 0.4
+    recent_positions = []
+    close_counter = 0
+    close_thresh = max(14, int(diag * 0.050))
     
     try:
         while True:
@@ -230,8 +233,9 @@ def main():
                     dx = use_x - anchor[0]
                     dy = use_y - anchor[1]
                     dist = math.hypot(dx, dy)
-                    if dist > max_pan_step and dist > 1e-6:
-                        r = max_pan_step / dist
+                    cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 3.2 + min(vmag / 300.0, 2.0)))
+                    if dist > cur_step and dist > 1e-6:
+                        r = cur_step / dist
                         anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
                     else:
                         anchor = (use_x, use_y)
@@ -241,6 +245,7 @@ def main():
                 detection_count += 1
                 lost_count = 0
 
+                follow_cx, follow_cy = None, None
                 if last_raw is not None:
                     dxn = x - last_raw[0]
                     dyn = y - last_raw[1]
@@ -254,10 +259,33 @@ def main():
                     else:
                         natural_counter = max(natural_counter - 1, 0)
                     last_vec = (0.8*lvx + 0.2*dxn, 0.8*lvy + 0.2*dyn)
+                    dirn = math.hypot(dxn, dyn)
+                    if dirn > 1e-6:
+                        ux, uy = dxn/dirn, dyn/dirn
+                        lead_px = int(12 + 24*max(0.0, current_zoom_level - 1.0) + min(vmag/18.0, 32.0))
+                        fx = (anchor[0] if anchor else x) + ux*lead_px
+                        fy = (anchor[1] if anchor else y) + uy*lead_px
+                        follow_cx, follow_cy = int(max(0, min(reader.width-1, fx))), int(max(0, min(reader.height-1, fy)))
                 last_raw = (x, y)
+                recent_positions.append((x, y))
+                if len(recent_positions) > 12:
+                    recent_positions.pop(0)
+                if len(recent_positions) >= 5:
+                    total = 0.0
+                    cnt = 0
+                    for i in range(len(recent_positions) - 1):
+                        dxs = recent_positions[i + 1][0] - recent_positions[i][0]
+                        dys = recent_positions[i + 1][1] - recent_positions[i][1]
+                        total += math.hypot(dxs, dys)
+                        cnt += 1
+                    avg_step = total / cnt if cnt > 0 else 0.0
+                    if avg_step <= close_thresh:
+                        close_counter += 1
+                    else:
+                        close_counter = max(close_counter - 1, 0)
 
                 dist_anchor_ball = math.hypot((anchor[0] if anchor else x) - x, (anchor[1] if anchor else y) - y)
-                zoom_gate_ok = (stability_score >= 0.45 or frames_tracking >= frames_required_for_zoom or natural_counter >= 4) and cooldown == 0
+                zoom_gate_ok = (stability_score >= 0.40 or frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2) and cooldown == 0
                 if zoom_gate_ok:
                     if vmag > 950:
                         target_zoom_level = 1.30
@@ -291,8 +319,15 @@ def main():
             
             x1, y1, x2, y2 = crop_coords
             if track_result:
-                zoom_cx = int(anchor[0] if anchor else (x1 + x2) // 2)
-                zoom_cy = int(anchor[1] if anchor else (y1 + y2) // 2)
+                if follow_cx is not None and follow_cy is not None:
+                    wz = 0.65
+                    ax = (anchor[0] if anchor else follow_cx)
+                    ay = (anchor[1] if anchor else follow_cy)
+                    zoom_cx = int(wz*follow_cx + (1.0-wz)*ax)
+                    zoom_cy = int(wz*follow_cy + (1.0-wz)*ay)
+                else:
+                    zoom_cx = int(0.6*x + 0.4*(anchor[0] if anchor else x))
+                    zoom_cy = int(0.6*y + 0.4*(anchor[1] if anchor else y))
             else:
                 zoom_cx = (x1 + x2) // 2
                 zoom_cy = (y1 + y2) // 2
@@ -310,6 +345,27 @@ def main():
                     x1 = max(0, x2 - zoomed_width)
                 if y2 - y1 < zoomed_height:
                     y1 = max(0, y2 - zoomed_height)
+                if track_result:
+                    rel_x = x - x1
+                    rel_y = y - y1
+                    mx = int(zoomed_width * 0.30)
+                    my = int(zoomed_height * 0.30)
+                    if rel_x < mx:
+                        shift = mx - rel_x
+                        x1 = max(0, min(reader.width - zoomed_width, x1 - shift))
+                        x2 = x1 + zoomed_width
+                    elif rel_x > zoomed_width - mx:
+                        shift = rel_x - (zoomed_width - mx)
+                        x1 = max(0, min(reader.width - zoomed_width, x1 + shift))
+                        x2 = x1 + zoomed_width
+                    if rel_y < my:
+                        shift = my - rel_y
+                        y1 = max(0, min(reader.height - zoomed_height, y1 - shift))
+                        y2 = y1 + zoomed_height
+                    elif rel_y > zoomed_height - my:
+                        shift = rel_y - (zoomed_height - my)
+                        y1 = max(0, min(reader.height - zoomed_height, y1 + shift))
+                        y2 = y1 + zoomed_height
             
             cropped = frame[y1:y2, x1:x2].copy()
             
