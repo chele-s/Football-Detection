@@ -110,8 +110,12 @@ def main():
             ball_detection = None
             all_detections = []
             
-            if isinstance(det_result, tuple):
+            if isinstance(det_result, tuple) and len(det_result) == 2:
                 ball_detection, all_detections = det_result
+            elif isinstance(det_result, tuple) and len(det_result) > 0:
+                ball_detection = det_result[0]
+                if len(det_result) > 1:
+                    all_detections = det_result[1] if isinstance(det_result[1], list) else []
             else:
                 ball_detection = det_result
             
