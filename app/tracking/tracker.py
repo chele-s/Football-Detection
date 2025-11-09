@@ -177,16 +177,48 @@ class BallTracker:
                         detection = None
             
             if detection is not None:
+                # Gating: distance from current estimate (velocity-aware)
+                vx_est, vy_est = self.get_velocity()
+                vmag = float(np.sqrt(vx_est**2 + vy_est**2))
+                allowed_distance = min(240.0, max(50.0, 2.0 * vmag))
+                dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
+                if self.kalman.initialized and dist_curr > allowed_distance:
+                    self.stats['outliers_rejected'] += 1
+                    detection = None
+                
+            if detection is not None:
+                # Mahalanobis gating before applying update
+                if self.kalman.initialized:
+                    H = self.kalman.H
+                    P = self.kalman.P
+                    R = self.kalman.R
+                    xhat = self.kalman.x
+                    z = np.array([[x_center],[y_center]], dtype=np.float64)
+                    y = z - H @ xhat
+                    S = H @ P @ H.T + R
+                    S = (S + S.T) / 2
+                    try:
+                        S_inv = np.linalg.inv(S)
+                    except np.linalg.LinAlgError:
+                        S += np.eye(2) * 1e-4
+                        S_inv = np.linalg.inv(S)
+                    maha = float(y.T @ S_inv @ y)
+                    # 99.7% chi-square gate for df=2 ≈ 11.83
+                    if maha > 11.83:
+                        self.stats['outliers_rejected'] += 1
+                        detection = None
+                
+            if detection is not None:
                 mahalanobis = self.kalman.correct(x_center, y_center)
                 self.mahalanobis_history.append(mahalanobis)
                 
                 if self.adaptive_noise and len(self.mahalanobis_history) >= 10:
                     avg_mahal = np.mean(list(self.mahalanobis_history)[-10:])
-                    if avg_mahal > 9.0:
-                        self.kalman.adapt_noise(1.2)
+                    if avg_mahal > 12.0:
+                        self.kalman.adapt_noise(1.1)
                         self.stats['noise_adaptations'] += 1
-                    elif avg_mahal < 2.0:
-                        self.kalman.adapt_noise(0.9)
+                    elif avg_mahal < 1.2:
+                        self.kalman.adapt_noise(0.95)
                         self.stats['noise_adaptations'] += 1
                 
                 vx, vy = self.kalman.get_velocity()
@@ -230,8 +262,8 @@ class BallTracker:
             self.confidence_history.append(0.0)
             
             if not self.kalman.is_stable():
-                logger.warning("Kalman filter unstable, increasing uncertainty")
-                self.kalman.adapt_noise(1.5)
+                logger.debug("Kalman filter unstable, increasing uncertainty")
+                self.kalman.adapt_noise(1.2)
             
             return (pred_x, pred_y, False)
         else:

@@ -297,6 +297,9 @@ class StreamPipeline:
                     camera_initialized = True
                 elif track_result:
                     x, y, is_tracking = track_result
+                    if not is_tracking:
+                        roi_active = False
+                        roi_fail_count = 0
                     state = self.tracker.get_state()
                     vmag = state['velocity_magnitude'] if state else 0.0
                     kalman_ok = state['kalman_stable'] if state else True
@@ -327,7 +330,8 @@ class StreamPipeline:
                             far_reacquire_count += 1
                         else:
                             far_reacquire_count = max(far_reacquire_count - 1, 0)
-                        det_ok = det_raw_ok and det_consist >= det_consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
+                        consist_need = det_consist_need + 2 if not is_tracking else det_consist_need
+                        det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
                         if det_ok:
                             x, y = bx, by
                             is_tracking = True
@@ -387,7 +391,10 @@ class StreamPipeline:
                             bloom_counter = bloom_max
                     last_raw = (x, y)
                     vhx, vhy = self.tracker.get_velocity()
-                    crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
+                    if is_tracking:
+                        crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
+                    else:
+                        crop_coords = self.virtual_camera.get_current_crop()
                     detection_count += 1
                     lost_count = 0
                     recent_positions.append((x, y))

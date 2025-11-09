@@ -179,6 +179,7 @@ def main():
     prev_crop = None
     max_crop_step_base = max(8, int(diag * 0.018))
     recent_dets = []
+    reacq_points = []
     area_min = max(64, int(0.00002 * reader.width * reader.height))
     area_max = int(0.030 * reader.width * reader.height)
     det_consist = 0
@@ -276,6 +277,10 @@ def main():
                 print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
             elif track_result:
                 x, y, is_tracking = track_result
+                if not is_tracking:
+                    # Freeze camera during search to avoid jitter from predictions
+                    roi_active = False
+                    roi_fail_count = 0
                 state = tracker.get_state()
                 vmag = state['velocity_magnitude'] if state else 0.0
                 kalman_ok = state['kalman_stable'] if state else True
@@ -306,7 +311,20 @@ def main():
                         far_reacquire_count += 1
                     else:
                         far_reacquire_count = max(far_reacquire_count - 1, 0)
-                    det_ok = det_raw_ok and det_consist >= det_consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
+                    # Spatial cluster gating when not tracking: require detections to cluster in space
+                    if det_raw_ok:
+                        reacq_points.append((bx, by))
+                        if len(reacq_points) > 12:
+                            reacq_points.pop(0)
+                    cluster_ok = True
+                    if not is_tracking and len(reacq_points) >= 6:
+                        mx = sum(p[0] for p in reacq_points) / len(reacq_points)
+                        my = sum(p[1] for p in reacq_points) / len(reacq_points)
+                        dists = [math.hypot(p[0]-mx, p[1]-my) for p in reacq_points]
+                        count_in = sum(1 for d in dists if d <= close_thresh * 0.9)
+                        cluster_ok = count_in >= 5
+                    consist_need = det_consist_need + 2 if not is_tracking else det_consist_need
+                    det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need) and cluster_ok
                     if det_ok:
                         x, y = bx, by
                         is_tracking = True
@@ -377,7 +395,10 @@ def main():
                     vhx, vhy = dvx, dvy
                 else:
                     vhx, vhy = tracker.get_velocity()
-                crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
+                if is_tracking:
+                    crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
+                else:
+                    crop_coords = virtual_camera.get_current_crop()
                 detection_count += 1
                 lost_count = 0
 
