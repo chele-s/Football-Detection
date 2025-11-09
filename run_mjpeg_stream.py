@@ -58,9 +58,9 @@ def main():
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Initialize virtual camera
-    # Use smaller output size to force cropping (tracking window)
-    output_width = 1280
-    output_height = 720
+    # Use 1600x900 for high quality tracking window
+    output_width = 1600
+    output_height = 900
     camera_config = config.get('camera', {})
     
     virtual_camera = VirtualCamera(
@@ -164,12 +164,9 @@ def main():
                 cv2.putText(cropped, "Tracking: LOST", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            # Resize for browser display (smaller for comfortable viewing)
-            # 854x480 fits well in most browser windows without scrolling
-            display_frame = cv2.resize(cropped, (854, 480), interpolation=cv2.INTER_AREA)
-            
-            # Update MJPEG server
-            mjpeg_server.update_frame(display_frame)
+            # Update MJPEG server with high quality
+            # Keep 1280x720 for better quality (browser will scale if needed)
+            mjpeg_server.update_frame(cropped)
             
             frame_count += 1
             

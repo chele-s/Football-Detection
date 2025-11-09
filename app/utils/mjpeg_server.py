@@ -49,7 +49,7 @@ class MJPEGServer:
                         while self.server_instance.running:
                             frame = self.server_instance.get_frame()
                             if frame is not None:
-                                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
                                 self.wfile.write(b'--frame\r\n')
                                 self.send_header('Content-Type', 'image/jpeg')
                                 self.send_header('Content-Length', len(jpeg))
