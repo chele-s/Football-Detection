@@ -71,8 +71,8 @@ def main():
     print("[3/5] Initializing ball tracker...")
     tracker = BallTracker(
         max_lost_frames=config['tracking'].get('max_lost_frames', 10),
-        min_confidence=config['tracking'].get('min_confidence', 0.20),
-        iou_threshold=config['tracking'].get('iou_threshold', 0.25),
+        min_confidence=config['tracking'].get('min_confidence', 0.10),
+        iou_threshold=config['tracking'].get('iou_threshold', 0.20),
         adaptive_noise=True
     )
     print(f"   → Tracker config: max_lost={tracker.max_lost_frames}, min_conf={tracker.min_confidence:.2f}, iou={tracker.iou_threshold:.2f}")
@@ -133,11 +133,11 @@ def main():
     target_zoom_level = 1.0
     max_zoom_level = 2.5
     frames_tracking = 0
-    frames_required_for_zoom = 10
+    frames_required_for_zoom = 6
 
     zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.085, damping=0.42, max_rate=0.16)
     diag = int(math.hypot(reader.width, reader.height))
-    stable_step_px = max(6, int(diag * 0.008))
+    stable_step_px = max(6, int(diag * 0.025))
     jump_reset_px = max(36, int(diag * 0.050))
     cooldown_max = 18
     cooldown = 0
@@ -145,10 +145,15 @@ def main():
     stability_score = 0.0
     anchor = None
     max_pan_step = max(10, int(diag * 0.016))
-    anchor_ready_px = max(32, int(diag * 0.060))
+    anchor_ready_px = max(28, int(diag * 0.055))
     zoom_lock_count = 0
     zoom_lock_max = 24
     hold_zoom_level = 1.0
+    last_raw = None
+    last_vec = (0.0, 0.0)
+    natural_counter = 0
+    natural_step_px = max(10, int(diag * 0.020))
+    min_dir_cos = 0.4
     
     try:
         while True:
@@ -202,7 +207,7 @@ def main():
                     if d > jump_reset_px:
                         cooldown = cooldown_max
                         frames_tracking = 0
-                        stability_score = max(stability_score - 0.4, 0.0)
+                        stability_score = max(stability_score - 0.2, 0.0)
                         use_x, use_y = last_stable
                     else:
                         if d <= stable_step_px:
@@ -217,8 +222,9 @@ def main():
                     if cooldown > 0:
                         cooldown -= 1
                         use_x, use_y = last_stable if last_stable else (x, y)
-                    frames_tracking = 0 if not is_tracking else frames_tracking
-                    stability_score = max(stability_score - 0.15, 0.0)
+                    if not is_tracking:
+                        frames_tracking = max(frames_tracking - 1, 0)
+                        stability_score = max(stability_score - 0.05, 0.0)
 
                 if anchor is not None:
                     dx = use_x - anchor[0]
@@ -235,8 +241,23 @@ def main():
                 detection_count += 1
                 lost_count = 0
 
+                if last_raw is not None:
+                    dxn = x - last_raw[0]
+                    dyn = y - last_raw[1]
+                    step = math.hypot(dxn, dyn)
+                    lvx, lvy = last_vec
+                    lvnorm = math.hypot(lvx, lvy)
+                    dnorm = math.hypot(dxn, dyn)
+                    cosd = (lvx*dxn + lvy*dyn)/(lvnorm*dnorm) if (lvnorm>1e-6 and dnorm>1e-6) else 1.0
+                    if step <= natural_step_px or cosd >= min_dir_cos:
+                        natural_counter += 1
+                    else:
+                        natural_counter = max(natural_counter - 1, 0)
+                    last_vec = (0.8*lvx + 0.2*dxn, 0.8*lvy + 0.2*dyn)
+                last_raw = (x, y)
+
                 dist_anchor_ball = math.hypot((anchor[0] if anchor else x) - x, (anchor[1] if anchor else y) - y)
-                zoom_gate_ok = (stability_score >= 0.50 or frames_tracking >= frames_required_for_zoom) and cooldown == 0 and dist_anchor_ball <= anchor_ready_px
+                zoom_gate_ok = (stability_score >= 0.45 or frames_tracking >= frames_required_for_zoom or natural_counter >= 4) and cooldown == 0
                 if zoom_gate_ok:
                     if vmag > 950:
                         target_zoom_level = 1.30
