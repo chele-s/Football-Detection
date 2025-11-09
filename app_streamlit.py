@@ -380,24 +380,18 @@ def main():
     
     with col1:
         st.subheader("Live Stream")
-        video_placeholder = st.empty()
-        
         if processor.running:
-            frame = processor.mjpeg_server.get_frame()
-            if frame is not None:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                video_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
-            else:
-                video_placeholder.info("⏳ Loading stream...")
+            st.success("🎥 **Stream activo en http://localhost:8554/stream.mjpg**")
+            st.info("💡 En Colab, ejecuta esto en otra celda para ver el stream:\n\n```python\nfrom pyngrok import ngrok\nvideo_tunnel = ngrok.connect(8554)\nprint(f'Video URL: {video_tunnel.public_url}/stream.mjpg')\n```")
         else:
-            video_placeholder.info("⚪ Press Start Stream to begin")
+            st.info("⚪ Press Start Stream to begin")
     
     with col2:
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
     if processor.running:
-        time.sleep(0.1)
+        time.sleep(2)
         st.rerun()
     
     stats = processor.get_stats()
