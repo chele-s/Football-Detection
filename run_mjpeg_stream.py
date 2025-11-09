@@ -148,7 +148,7 @@ def main():
     # Fast zoom system
     current_zoom_level = 1.0
     target_zoom_level = 1.0
-    max_zoom_level = 2.5
+    max_zoom_level = 1.8
     frames_tracking = 0
     frames_required_for_zoom = 4
 
@@ -190,6 +190,8 @@ def main():
     roi_ready_frames = 35
     roi_fail_count = 0
     roi_fail_max = 6
+    bloom_counter = 0
+    bloom_max = 12
     
     try:
         while True:
@@ -380,6 +382,8 @@ def main():
                         fx = (anchor[0] if anchor else x) + ux*lead_px
                         fy = (anchor[1] if anchor else y) + uy*lead_px
                         follow_cx, follow_cy = int(max(0, min(reader.width-1, fx))), int(max(0, min(reader.height-1, fy)))
+                    if cosd <= -0.4 and step > close_thresh*0.8:
+                        bloom_counter = bloom_max
                 last_raw = (x, y)
                 if ball_detection:
                     last_det = (ball_detection[0], ball_detection[1])
@@ -415,22 +419,22 @@ def main():
                             tcnt += 1
                         avg_det_step = ttot / tcnt if tcnt > 0 else 0.0
                         if avg_det_step <= close_thresh * 0.6:
-                            det_zoom = 2.20
+                            det_zoom = 1.70
                         elif avg_det_step <= close_thresh * 1.1:
-                            det_zoom = 1.90
-                        else:
                             det_zoom = 1.55
+                        else:
+                            det_zoom = 1.35
                     if det_zoom is not None:
                         target_zoom_level = min(max_zoom_level, det_zoom)
                     else:
                         if vmag > 950:
-                            target_zoom_level = 1.30
+                            target_zoom_level = 1.20
                         elif vmag > 650:
-                            target_zoom_level = 1.50
+                            target_zoom_level = 1.35
                         elif vmag > 380:
-                            target_zoom_level = 1.75
+                            target_zoom_level = 1.50
                         else:
-                            target_zoom_level = 2.15
+                            target_zoom_level = 1.65
                     zoom_lock_count = zoom_lock_max
                     hold_zoom_level = target_zoom_level
                 else:
@@ -463,14 +467,14 @@ def main():
             x1, y1, x2, y2 = crop_coords
             if track_result:
                 if follow_cx is not None and follow_cy is not None:
-                    wz = 0.50
+                    wz = 0.70
                     ax = (anchor[0] if anchor else follow_cx)
                     ay = (anchor[1] if anchor else follow_cy)
                     zoom_cx = int(wz*follow_cx + (1.0-wz)*ax)
                     zoom_cy = int(wz*follow_cy + (1.0-wz)*ay)
                 else:
-                    zoom_cx = int(0.6*x + 0.4*(anchor[0] if anchor else x))
-                    zoom_cy = int(0.6*y + 0.4*(anchor[1] if anchor else y))
+                    zoom_cx = int(0.8*x + 0.2*(anchor[0] if anchor else x))
+                    zoom_cy = int(0.8*y + 0.2*(anchor[1] if anchor else y))
             else:
                 zoom_cx = (x1 + x2) // 2
                 zoom_cy = (y1 + y2) // 2
@@ -577,6 +581,12 @@ def main():
                            (center_x - 100, center_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
             
+            if bloom_counter > 0:
+                intensity = bloom_counter / bloom_max
+                blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=6, sigmaY=6)
+                cropped = cv2.addWeighted(cropped, 1.0, blurred, 0.35*intensity, 0)
+                bloom_counter -= 1
+
             loop_time = (time.time() - loop_start) * 1000
             fps = 1000 / loop_time if loop_time > 0 else 0
             fps_history.append(fps)

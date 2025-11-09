@@ -172,7 +172,7 @@ class StreamPipeline:
         lost_count = 0
         current_zoom_level = 1.0
         target_zoom_level = 1.0
-        max_zoom_level = 2.5
+        max_zoom_level = 1.8
         frames_tracking = 0
         frames_required_for_zoom = 4
         zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level)
@@ -210,6 +210,8 @@ class StreamPipeline:
         roi_ready_frames = 35
         roi_fail_count = 0
         roi_fail_max = 6
+        bloom_counter = 0
+        bloom_max = 12
         
         logger.info("Starting main loop... (Press 'q' to quit)")
         
@@ -359,6 +361,8 @@ class StreamPipeline:
                         else:
                             natural_counter = max(natural_counter - 1, 0)
                         last_vec = (0.8*lvx + 0.2*dxn, 0.8*lvy + 0.2*dyn)
+                        if cosd <= -0.4 and step > close_thresh*0.8:
+                            bloom_counter = bloom_max
                     last_raw = (x, y)
                     vhx, vhy = self.tracker.get_velocity()
                     crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
@@ -383,13 +387,13 @@ class StreamPipeline:
                     zoom_gate_ok = (det_ok) or (is_tracking and cooldown == 0 and (stability_score >= 0.40 or frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2))
                     if zoom_gate_ok:
                         if vmag > 950:
-                            target_zoom_level = 1.30
+                            target_zoom_level = 1.20
                         elif vmag > 650:
-                            target_zoom_level = 1.50
+                            target_zoom_level = 1.35
                         elif vmag > 380:
-                            target_zoom_level = 1.75
+                            target_zoom_level = 1.50
                         else:
-                            target_zoom_level = 2.10
+                            target_zoom_level = 1.65
                         zoom_lock_count = zoom_lock_max
                         hold_zoom_level = target_zoom_level
                         if det_ok:
@@ -424,12 +428,12 @@ class StreamPipeline:
                 if track_result:
                     if last_raw is not None and anchor is not None:
                         follow_cx, follow_cy = anchor[0], anchor[1]
-                        wz = 0.50
+                        wz = 0.70
                         zoom_cx = int(wz*last_raw[0] + (1.0-wz)*follow_cx)
                         zoom_cy = int(wz*last_raw[1] + (1.0-wz)*follow_cy)
                     else:
-                        zoom_cx = int(x)
-                        zoom_cy = int(y)
+                        zoom_cx = int(0.8*x + 0.2*(anchor[0] if anchor else x))
+                        zoom_cy = int(0.8*y + 0.2*(anchor[1] if anchor else y))
                 else:
                     zoom_cx = (x1 + x2) // 2
                     zoom_cy = (y1 + y2) // 2
@@ -505,6 +509,12 @@ class StreamPipeline:
                         cropped,
                         (self.config['output']['width'], self.config['output']['height'])
                     )
+                
+                if bloom_counter > 0:
+                    intensity = bloom_counter / bloom_max
+                    blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=6, sigmaY=6)
+                    cropped = cv2.addWeighted(cropped, 1.0, blurred, 0.35*intensity, 0)
+                    bloom_counter -= 1
                 
                 if self.show_stats:
                     current_fps = 1.0 / (time.time() - loop_start) if (time.time() - loop_start) > 0 else 0
