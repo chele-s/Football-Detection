@@ -180,11 +180,15 @@ class BallTracker:
                 # Gating: distance from current estimate (velocity-aware)
                 vx_est, vy_est = self.get_velocity()
                 vmag = float(np.sqrt(vx_est**2 + vy_est**2))
-                allowed_distance = min(240.0, max(50.0, 2.0 * vmag))
-                dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
-                if self.kalman.initialized and dist_curr > allowed_distance:
-                    self.stats['outliers_rejected'] += 1
-                    detection = None
+                if self.kalman.initialized:
+                    if self.is_tracking:
+                        allowed_distance = max(120.0, min(900.0, 3.5 * vmag + 220.0))
+                    else:
+                        allowed_distance = 1200.0
+                    dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
+                    if dist_curr > allowed_distance:
+                        self.stats['outliers_rejected'] += 1
+                        detection = None
                 
             if detection is not None:
                 # Mahalanobis gating before applying update
@@ -203,8 +207,8 @@ class BallTracker:
                         S += np.eye(2) * 1e-4
                         S_inv = np.linalg.inv(S)
                     maha = float(y.T @ S_inv @ y)
-                    # 99.7% chi-square gate for df=2 ≈ 11.83
-                    if maha > 11.83:
+                    gate_thr = 14.0 if not self.is_tracking else 11.83
+                    if maha > gate_thr:
                         self.stats['outliers_rejected'] += 1
                         detection = None
                 

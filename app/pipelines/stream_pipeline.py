@@ -203,6 +203,7 @@ class StreamPipeline:
         prev_zoom_center = None
         prev_crop = None
         max_crop_step_base = max(8, int(diag * 0.018))
+        reacq_points = []
         area_min = max(64, int(0.00002 * reader.width * reader.height))
         area_max = int(0.030 * reader.width * reader.height)
         det_consist = 0
@@ -319,7 +320,7 @@ class StreamPipeline:
                             step_ok = step_det <= close_thresh * 1.3
                         aspect = (bw / bh) if bh > 0 else 1.0
                         area = bw * bh
-                        det_raw_ok = (bconf >= 0.28) and step_ok and (0.75 <= aspect <= 1.35) and (area >= area_min and area <= area_max)
+                        det_raw_ok = (bconf >= 0.24) and step_ok and (0.65 <= aspect <= 1.45) and (area >= area_min and area <= area_max)
                         if det_raw_ok:
                             det_consist += 1
                         else:
@@ -330,11 +331,23 @@ class StreamPipeline:
                             far_reacquire_count += 1
                         else:
                             far_reacquire_count = max(far_reacquire_count - 1, 0)
-                        consist_need = det_consist_need + 2 if not is_tracking else det_consist_need
-                        det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
+                        if det_raw_ok:
+                            reacq_points.append((bx, by))
+                            if len(reacq_points) > 10:
+                                reacq_points.pop(0)
+                        cluster_ok = True
+                        if (not is_tracking) and (far_reacquire_count < far_reacquire_need) and len(reacq_points) >= 4:
+                            mx = sum(p[0] for p in reacq_points) / len(reacq_points)
+                            my = sum(p[1] for p in reacq_points) / len(reacq_points)
+                            dists = [math.hypot(p[0]-mx, p[1]-my) for p in reacq_points]
+                            count_in = sum(1 for d in dists if d <= close_thresh * 1.2)
+                            cluster_ok = count_in >= 3
+                        consist_need = det_consist_need + 1 if not is_tracking else det_consist_need
+                        det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need) and cluster_ok
                         if det_ok:
                             x, y = bx, by
                             is_tracking = True
+                            reacq_points.clear()
                     if is_tracking and kalman_ok and cooldown == 0:
                         d = math.hypot(x - last_stable[0], y - last_stable[1])
                         if d > jump_reset_px:
