@@ -59,27 +59,27 @@ def main():
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Initialize virtual camera
-    # Use 480x270 for MAXIMUM ZOOM - only ball area visible (4x zoom)
-    output_width = 480
-    output_height = 270
+    # Base crop size for normal view - will zoom progressively when tracking
+    base_output_width = 960
+    base_output_height = 540
     camera_config = config.get('camera', {})
     
     virtual_camera = VirtualCamera(
         frame_width=reader.width,
         frame_height=reader.height,
-        output_width=output_width,
-        output_height=output_height,
-        dead_zone_percent=camera_config.get('dead_zone', 0.08),  # Smaller dead zone = more responsive
-        anticipation_factor=camera_config.get('anticipation', 0.5),  # High anticipation for fast ball
-        zoom_padding=camera_config.get('zoom_padding', 1.0),  # NO EXTRA PADDING - exact crop size
+        output_width=base_output_width,
+        output_height=base_output_height,
+        dead_zone_percent=camera_config.get('dead_zone', 0.20),  # Larger dead zone = smoother, less jittery
+        anticipation_factor=camera_config.get('anticipation', 0.2),  # Low anticipation = more natural
+        zoom_padding=camera_config.get('zoom_padding', 1.3),  # Some padding for context
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 0.8),  # Less smoothing = more responsive
-        smoothing_beta=camera_config.get('smoothing_beta', 0.005),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.5),  # More smoothing = less jitter
+        smoothing_beta=camera_config.get('smoothing_beta', 0.01),
         use_pid=True,  # Enable PID control for smooth tracking
-        prediction_steps=8  # Predict more frames ahead for anticipation
+        prediction_steps=3  # Less prediction = more natural following
     )
-    print(f"   → Camera config: {output_width}x{output_height} crop from {reader.width}x{reader.height}, zoom_padding=1.0 (FIXED)")
-    print(f"   → Zoom ratio: {reader.width/output_width:.1f}x (MAXIMUM)")
+    print(f"   → Camera config: {base_output_width}x{base_output_height} base crop")
+    print(f"   → Professional cameraman mode: Smooth zoom when tracking ball")
     
     ball_class_id = config['model'].get('ball_class_id', 0)
     
@@ -94,6 +94,14 @@ def main():
     camera_initialized = False
     detection_count = 0
     lost_count = 0
+    
+    # Progressive zoom system
+    current_zoom_level = 1.0  # 1.0 = no zoom (base size)
+    target_zoom_level = 1.0
+    zoom_transition_speed = 0.05  # Smooth zoom transitions
+    max_zoom_level = 2.5  # Maximum 2.5x zoom when fully locked on ball
+    frames_tracking = 0  # Count consecutive tracking frames
+    frames_required_for_zoom = 15  # Need 15 frames (0.5s @ 30fps) before zooming
     
     try:
         while True:
@@ -125,9 +133,7 @@ def main():
             # Initialize camera on first valid detection
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
-                # Initialize camera centered on first ball detection
                 virtual_camera.reset()
-                # Update camera position
                 crop_coords = virtual_camera.update(x, y, time.time())
                 camera_initialized = True
                 print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
@@ -135,14 +141,63 @@ def main():
                 x, y, is_tracking = track_result
                 crop_coords = virtual_camera.update(x, y, time.time())
                 detection_count += 1
-                lost_count = 0  # Reset lost counter
+                lost_count = 0
+                
+                # Count frames with active tracking (not prediction)
+                if is_tracking:
+                    frames_tracking += 1
+                else:
+                    frames_tracking = max(0, frames_tracking - 2)  # Decay faster when predicting
+                
+                # Progressive zoom: only zoom in when consistently tracking
+                if frames_tracking >= frames_required_for_zoom:
+                    # Gradually increase zoom up to max
+                    zoom_progress = min((frames_tracking - frames_required_for_zoom) / 30.0, 1.0)
+                    target_zoom_level = 1.0 + (max_zoom_level - 1.0) * zoom_progress
+                else:
+                    # Not enough tracking frames yet - stay at base zoom
+                    target_zoom_level = 1.0
             else:
-                # No tracking - keep current position
+                # No tracking - keep current position and zoom out
                 crop_coords = virtual_camera.get_current_crop()
                 lost_count += 1
+                frames_tracking = 0
+                target_zoom_level = 1.0  # Zoom out to base view
             
-            # Crop frame
+            # Smooth zoom transition
+            if abs(current_zoom_level - target_zoom_level) > 0.01:
+                if current_zoom_level < target_zoom_level:
+                    current_zoom_level = min(current_zoom_level + zoom_transition_speed, target_zoom_level)
+                else:
+                    current_zoom_level = max(current_zoom_level - zoom_transition_speed, target_zoom_level)
+            
+            # Apply progressive zoom by adjusting crop size
             x1, y1, x2, y2 = crop_coords
+            
+            # Calculate zoomed crop (smaller crop = more zoom)
+            if current_zoom_level > 1.0:
+                crop_width = x2 - x1
+                crop_height = y2 - y1
+                
+                # Reduce crop size based on zoom level
+                zoomed_width = int(crop_width / current_zoom_level)
+                zoomed_height = int(crop_height / current_zoom_level)
+                
+                # Center the zoomed crop
+                center_x = (x1 + x2) // 2
+                center_y = (y1 + y2) // 2
+                
+                x1 = max(0, center_x - zoomed_width // 2)
+                y1 = max(0, center_y - zoomed_height // 2)
+                x2 = min(reader.width, x1 + zoomed_width)
+                y2 = min(reader.height, y1 + zoomed_height)
+                
+                # Adjust if we hit edges
+                if x2 - x1 < zoomed_width:
+                    x1 = max(0, x2 - zoomed_width)
+                if y2 - y1 < zoomed_height:
+                    y1 = max(0, y2 - zoomed_height)
+            
             cropped = frame[y1:y2, x1:x2].copy()
             
             # Draw detection on cropped frame
@@ -224,13 +279,24 @@ def main():
             cv2.putText(cropped, f"Detections: {detection_count}", (10, 120), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
-            # Show "CAMERAMAN MODE" indicator with actual zoom ratio
-            zoom_ratio = reader.width / 480  # 1920/480 = 4x
-            zoom_text = f"ZOOM: {zoom_ratio:.1f}x"
-            cv2.putText(cropped, zoom_text, (cropped.shape[1] - 150, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+            # Show zoom indicator
+            if current_zoom_level > 1.05:
+                zoom_text = f"ZOOM: {current_zoom_level:.1f}x"
+                zoom_color = (0, 255, 255) if current_zoom_level < max_zoom_level else (0, 255, 0)
+            else:
+                zoom_text = "ZOOM: OFF"
+                zoom_color = (128, 128, 128)
             
-            # Upscale for better visibility - 854x480 from 480x270
+            cv2.putText(cropped, zoom_text, (cropped.shape[1] - 150, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, zoom_color, 2)
+            
+            # Show tracking confidence
+            if frames_tracking > 0:
+                track_text = f"Lock: {min(frames_tracking, frames_required_for_zoom)}/{frames_required_for_zoom}"
+                cv2.putText(cropped, track_text, (cropped.shape[1] - 150, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            # Upscale for better visibility - 854x480 target
             display_frame = cv2.resize(cropped, (854, 480), interpolation=cv2.INTER_LINEAR)
             
             # Update MJPEG server
@@ -248,7 +314,7 @@ def main():
                 tracking_status = "ACTIVE" if track_result and track_result[2] else "LOST" if not track_result else "PRED"
                 if track_result:
                     x, y, _ = track_result
-                    print(f"[STREAM] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | Inf: {inf_time:5.1f}ms | Track: {tracking_status} ({x:.0f},{y:.0f}) | Dets: {detection_count}")
+                    print(f"[STREAM] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | Inf: {inf_time:5.1f}ms | Track: {tracking_status} | Zoom: {current_zoom_level:.2f}x | Lock: {frames_tracking}")
                 else:
                     print(f"[STREAM] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | Inf: {inf_time:5.1f}ms | Track: {tracking_status} | Lost: {lost_count}")
                 
