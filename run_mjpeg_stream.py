@@ -368,6 +368,13 @@ def main():
                         y1 = max(0, min(reader.height - zoomed_height, y1 + shift))
                         y2 = y1 + zoomed_height
             
+            x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
+            if x1 < 0: x1 = 0
+            if y1 < 0: y1 = 0
+            if x2 > reader.width: x2 = reader.width
+            if y2 > reader.height: y2 = reader.height
+            if x2 <= x1: x2 = min(reader.width, x1 + 2)
+            if y2 <= y1: y2 = min(reader.height, y1 + 2)
             cropped = frame[y1:y2, x1:x2].copy()
             
             # Draw detection on cropped frame
