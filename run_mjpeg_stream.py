@@ -70,10 +70,10 @@ def main():
     # Initialize tracker with optimized parameters for ball tracking
     print("[3/5] Initializing ball tracker...")
     tracker = BallTracker(
-        max_lost_frames=config['tracking'].get('max_lost_frames', 10),  # Shorter recovery window
-        min_confidence=config['tracking'].get('min_confidence', 0.08),  # Lower threshold for marginal detections
-        iou_threshold=config['tracking'].get('iou_threshold', 0.2),  # More permissive for fast moving ball
-        adaptive_noise=True  # Kalman filter adapts to ball movement
+        max_lost_frames=config['tracking'].get('max_lost_frames', 10),
+        min_confidence=config['tracking'].get('min_confidence', 0.20),
+        iou_threshold=config['tracking'].get('iou_threshold', 0.25),
+        adaptive_noise=True
     )
     print(f"   → Tracker config: max_lost={tracker.max_lost_frames}, min_conf={tracker.min_confidence:.2f}, iou={tracker.iou_threshold:.2f}")
     
@@ -133,15 +133,22 @@ def main():
     target_zoom_level = 1.0
     max_zoom_level = 2.5
     frames_tracking = 0
-    frames_required_for_zoom = 15
+    frames_required_for_zoom = 10
 
-    zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.085, damping=0.42, max_rate=0.18)
+    zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.085, damping=0.42, max_rate=0.16)
     diag = int(math.hypot(reader.width, reader.height))
-    stable_step_px = max(8, int(diag * 0.010))
-    jump_reset_px = max(40, int(diag * 0.060))
+    stable_step_px = max(6, int(diag * 0.008))
+    jump_reset_px = max(36, int(diag * 0.050))
     cooldown_max = 18
     cooldown = 0
     last_stable = None
+    stability_score = 0.0
+    anchor = None
+    max_pan_step = max(10, int(diag * 0.016))
+    anchor_ready_px = max(32, int(diag * 0.060))
+    zoom_lock_count = 0
+    zoom_lock_max = 24
+    hold_zoom_level = 1.0
     
     try:
         while True:
@@ -175,6 +182,7 @@ def main():
                 x, y, is_tracking = track_result
                 virtual_camera.reset()
                 last_stable = (x, y)
+                anchor = (x, y)
                 crop_coords = virtual_camera.update(x, y, time.time(), velocity_hint=tracker.get_velocity())
                 camera_initialized = True
                 print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
@@ -185,6 +193,8 @@ def main():
                 kalman_ok = state['kalman_stable'] if state else True
                 if last_stable is None:
                     last_stable = (x, y)
+                if anchor is None:
+                    anchor = (x, y)
                 use_x, use_y = x, y
 
                 if is_tracking and kalman_ok and cooldown == 0:
@@ -192,68 +202,89 @@ def main():
                     if d > jump_reset_px:
                         cooldown = cooldown_max
                         frames_tracking = 0
+                        stability_score = max(stability_score - 0.4, 0.0)
                         use_x, use_y = last_stable
                     else:
                         if d <= stable_step_px:
                             frames_tracking += 1
-                            a = 0.2
+                            stability_score = min(stability_score + 0.12, 1.0)
+                            a = 0.18
                             last_stable = (last_stable[0] * (1 - a) + x * a, last_stable[1] * (1 - a) + y * a)
                         else:
                             frames_tracking = max(frames_tracking - 1, 0)
+                            stability_score = max(stability_score - 0.10, 0.0)
                 else:
                     if cooldown > 0:
                         cooldown -= 1
                         use_x, use_y = last_stable if last_stable else (x, y)
                     frames_tracking = 0 if not is_tracking else frames_tracking
+                    stability_score = max(stability_score - 0.15, 0.0)
+
+                if anchor is not None:
+                    dx = use_x - anchor[0]
+                    dy = use_y - anchor[1]
+                    dist = math.hypot(dx, dy)
+                    if dist > max_pan_step and dist > 1e-6:
+                        r = max_pan_step / dist
+                        anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
+                    else:
+                        anchor = (use_x, use_y)
+                    use_x, use_y = anchor
 
                 crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=tracker.get_velocity())
                 detection_count += 1
                 lost_count = 0
 
-                if frames_tracking >= frames_required_for_zoom:
-                    if vmag > 900:
-                        target_zoom_level = 1.35
-                    elif vmag > 600:
-                        target_zoom_level = 1.55
-                    elif vmag > 350:
-                        target_zoom_level = 1.80
+                dist_anchor_ball = math.hypot((anchor[0] if anchor else x) - x, (anchor[1] if anchor else y) - y)
+                zoom_gate_ok = (stability_score >= 0.50 or frames_tracking >= frames_required_for_zoom) and cooldown == 0 and dist_anchor_ball <= anchor_ready_px
+                if zoom_gate_ok:
+                    if vmag > 950:
+                        target_zoom_level = 1.30
+                    elif vmag > 650:
+                        target_zoom_level = 1.50
+                    elif vmag > 380:
+                        target_zoom_level = 1.75
                     else:
-                        target_zoom_level = 2.20
+                        target_zoom_level = 2.15
+                    zoom_lock_count = zoom_lock_max
+                    hold_zoom_level = target_zoom_level
                 else:
-                    target_zoom_level = 1.0
+                    if zoom_lock_count > 0:
+                        zoom_lock_count -= 1
+                        hold_zoom_level = max(1.2, hold_zoom_level * 0.98)
+                        target_zoom_level = hold_zoom_level
+                    else:
+                        target_zoom_level = 1.0
             else:
                 # No tracking - keep current position and zoom out
                 crop_coords = virtual_camera.get_current_crop()
                 lost_count += 1
                 frames_tracking = 0
-                target_zoom_level = 1.0  # Zoom out to base view
+                target_zoom_level = 1.0
+                zoom_lock_count = 0
+                hold_zoom_level = 1.0
             
             # Fast zoom transition (2 frames)
             zoom.set_target(target_zoom_level)
             current_zoom_level = zoom.update()
             
-            # Apply progressive zoom by adjusting crop size
             x1, y1, x2, y2 = crop_coords
-            
-            # Calculate zoomed crop (smaller crop = more zoom)
+            if track_result:
+                zoom_cx = int(anchor[0] if anchor else (x1 + x2) // 2)
+                zoom_cy = int(anchor[1] if anchor else (y1 + y2) // 2)
+            else:
+                zoom_cx = (x1 + x2) // 2
+                zoom_cy = (y1 + y2) // 2
+
             if current_zoom_level > 1.0:
                 crop_width = x2 - x1
                 crop_height = y2 - y1
-                
-                # Reduce crop size based on zoom level
                 zoomed_width = int(crop_width / current_zoom_level)
                 zoomed_height = int(crop_height / current_zoom_level)
-                
-                # Center the zoomed crop
-                center_x = (x1 + x2) // 2
-                center_y = (y1 + y2) // 2
-                
-                x1 = max(0, center_x - zoomed_width // 2)
-                y1 = max(0, center_y - zoomed_height // 2)
+                x1 = max(0, zoom_cx - zoomed_width // 2)
+                y1 = max(0, zoom_cy - zoomed_height // 2)
                 x2 = min(reader.width, x1 + zoomed_width)
                 y2 = min(reader.height, y1 + zoomed_height)
-                
-                # Adjust if we hit edges
                 if x2 - x1 < zoomed_width:
                     x1 = max(0, x2 - zoomed_width)
                 if y2 - y1 < zoomed_height:

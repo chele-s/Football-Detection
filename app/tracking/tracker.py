@@ -286,7 +286,10 @@ class BallTracker:
             return None
         
         best_detection = None
-        best_distance = float('inf')
+        best_score = float('inf')
+        vx, vy = self.get_velocity()
+        vmag = float(np.sqrt(vx**2 + vy**2))
+        allowed_distance = min(320.0, max(100.0, 2.5 * vmag))
         
         for det in detections:
             if len(det) == 6:
@@ -299,10 +302,12 @@ class BallTracker:
             if conf < self.min_confidence:
                 continue
             
-            distance = np.sqrt((x - pred_x)**2 + (y - pred_y)**2)
-            
-            if distance < best_distance and distance < 100:
-                best_distance = distance
+            distance = float(np.sqrt((x - pred_x)**2 + (y - pred_y)**2))
+            if distance > allowed_distance:
+                continue
+            score = distance / max(conf, 1e-3)
+            if score < best_score:
+                best_score = score
                 best_detection = det_tuple
         
         return best_detection
