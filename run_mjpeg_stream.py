@@ -189,6 +189,11 @@ def main():
     roi_ready_frames = 35
     roi_fail_count = 0
     roi_fail_max = 6
+    roi_margin_frac = 0.12
+    roi_min_w = max(160, int(reader.width * 0.12))
+    roi_min_h = max(160, int(reader.height * 0.12))
+    roi_expand_lvl = 0
+    roi_expand_lvl_max = 3
     
     try:
         while True:
@@ -211,15 +216,52 @@ def main():
                 ry1 = max(0, min(reader.height-2, int(ry1)))
                 rx2 = max(rx1+2, min(reader.width, int(rx2)))
                 ry2 = max(ry1+2, min(reader.height, int(ry2)))
+                rw = rx2 - rx1
+                rh = ry2 - ry1
+                lvx, lvy = last_vec
+                lvnorm = math.hypot(lvx, lvy)
+                dyn_pad = min(0.10, lvnorm / 250.0)
+                zpad = 0.06 * max(0.0, current_zoom_level - 1.0)
+                mfrac = roi_margin_frac * (1.0 + 0.5 * roi_expand_lvl) + dyn_pad + zpad
+                if mfrac > 0.35:
+                    mfrac = 0.35
+                m = int(max(rw, rh) * mfrac)
+                cx = (rx1 + rx2) // 2
+                cy = (ry1 + ry2) // 2
+                rx1 = max(0, cx - (rw//2 + m))
+                ry1 = max(0, cy - (rh//2 + m))
+                rx2 = min(reader.width, cx + (rw//2 + m))
+                ry2 = min(reader.height, cy + (rh//2 + m))
+                side = max(rx2 - rx1, ry2 - ry1)
+                rx1 = max(0, min(reader.width - side, cx - side // 2))
+                ry1 = max(0, min(reader.height - side, cy - side // 2))
+                rx2 = rx1 + side
+                ry2 = ry1 + side
+                rw = rx2 - rx1
+                rh = ry2 - ry1
+                if rw < roi_min_w:
+                    add = (roi_min_w - rw) // 2
+                    rx1 = max(0, rx1 - add)
+                    rx2 = min(reader.width, rx2 + add)
+                if rh < roi_min_h:
+                    add = (roi_min_h - rh) // 2
+                    ry1 = max(0, ry1 - add)
+                    ry2 = min(reader.height, ry2 + add)
                 frame_in = frame[ry1:ry2, rx1:rx2]
                 use_roi = True
                 offx, offy = rx1, ry1
+                det_thr_backup = detector.confidence_threshold
+                new_thr = max(0.10, det_thr_backup - 0.05)
+                if new_thr != det_thr_backup:
+                    detector.set_confidence_threshold(new_thr)
                 det_result = detector.predict_ball_only(
                     frame_in,
                     ball_class_id,
                     use_temporal_filtering=False,
                     return_candidates=True
                 )
+                if detector.confidence_threshold != det_thr_backup:
+                    detector.set_confidence_threshold(det_thr_backup)
             else:
                 det_result = detector.predict_ball_only(
                     frame, 
@@ -241,11 +283,15 @@ def main():
                 if roi_active:
                     if ball_detection is None:
                         roi_fail_count += 1
+                        if roi_expand_lvl < roi_expand_lvl_max:
+                            roi_expand_lvl += 1
                     else:
                         roi_fail_count = 0
+                        roi_expand_lvl = max(0, roi_expand_lvl - 1)
                     if roi_fail_count >= roi_fail_max:
                         roi_active = False
                         roi_fail_count = 0
+                        roi_expand_lvl = 0
             
             track_result = tracker.update(ball_detection, all_detections)
             
