@@ -189,10 +189,6 @@ def main():
     roi_ready_frames = 35
     roi_fail_count = 0
     roi_fail_max = 6
-    roi_margin_frac_fixed = 0.03
-    roi_refresh_interval = 45
-    roi_min_zoom_for_roi = 1.30
-    roi_stability_min = 0.40
     
     try:
         while True:
@@ -209,22 +205,12 @@ def main():
             start_inf = time.time()
             use_roi = False
             offx, offy = 0, 0
-            refresh_due = roi_active and (frame_count % roi_refresh_interval == 0)
-            if prev_crop is not None and roi_active and not refresh_due:
+            if prev_crop is not None and roi_active:
                 rx1, ry1, rx2, ry2 = prev_crop
                 rx1 = max(0, min(reader.width-2, int(rx1)))
                 ry1 = max(0, min(reader.height-2, int(ry1)))
                 rx2 = max(rx1+2, min(reader.width, int(rx2)))
                 ry2 = max(ry1+2, min(reader.height, int(ry2)))
-                rw = rx2 - rx1
-                rh = ry2 - ry1
-                m = int(max(rw, rh) * roi_margin_frac_fixed)
-                cx = (rx1 + rx2) // 2
-                cy = (ry1 + ry2) // 2
-                rx1 = max(0, cx - (rw//2 + m))
-                ry1 = max(0, cy - (rh//2 + m))
-                rx2 = min(reader.width, cx + (rw//2 + m))
-                ry2 = min(reader.height, cy + (rh//2 + m))
                 frame_in = frame[ry1:ry2, rx1:rx2]
                 use_roi = True
                 offx, offy = rx1, ry1
@@ -305,7 +291,7 @@ def main():
                         roi_stable_frames += 1
                     else:
                         roi_stable_frames = max(roi_stable_frames - 1, 0)
-                    if (not roi_active) and roi_stable_frames >= roi_ready_frames and current_zoom_level >= roi_min_zoom_for_roi and stability_score >= roi_stability_min:
+                    if (not roi_active) and roi_stable_frames >= roi_ready_frames:
                         roi_active = True
                         roi_fail_count = 0
 
