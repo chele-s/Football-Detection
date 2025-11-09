@@ -164,8 +164,12 @@ def main():
                 cv2.putText(cropped, "Tracking: LOST", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
+            # Resize for browser display (smaller for comfortable viewing)
+            # 854x480 fits well in most browser windows without scrolling
+            display_frame = cv2.resize(cropped, (854, 480), interpolation=cv2.INTER_AREA)
+            
             # Update MJPEG server
-            mjpeg_server.update_frame(cropped)
+            mjpeg_server.update_frame(display_frame)
             
             frame_count += 1
             
