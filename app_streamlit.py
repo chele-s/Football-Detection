@@ -380,24 +380,24 @@ def main():
     
     with col1:
         st.subheader("Live Stream")
+        video_placeholder = st.empty()
+        
         if processor.running:
-            video_html = f"""
-            <div style="width: 100%; height: auto; background: #000; border-radius: 8px; overflow: hidden;">
-                <img src="http://localhost:8554/stream.mjpg" 
-                     style="width: 100%; height: auto; display: block;"
-                     alt="Live video stream">
-            </div>
-            """
-            st.markdown(video_html, unsafe_allow_html=True)
+            frame = processor.mjpeg_server.get_frame()
+            if frame is not None:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                video_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
+            else:
+                video_placeholder.info("⏳ Loading stream...")
         else:
-            st.info("⚪ Press Start Stream to begin")
+            video_placeholder.info("⚪ Press Start Stream to begin")
     
     with col2:
         st.subheader("Statistics")
         stats_placeholder = st.empty()
     
     if processor.running:
-        time.sleep(1)
+        time.sleep(0.1)
         st.rerun()
     
     stats = processor.get_stats()
