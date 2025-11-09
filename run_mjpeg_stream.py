@@ -34,14 +34,15 @@ def main():
         warmup_iterations=config['model'].get('warmup_iterations', 3)
     )
     
-    # Initialize tracker
+    # Initialize tracker with optimized parameters for ball tracking
     print("[3/5] Initializing ball tracker...")
     tracker = BallTracker(
-        max_lost_frames=config['tracking']['max_lost_frames'],
-        min_confidence=config['tracking']['min_confidence'],
-        iou_threshold=config['tracking'].get('iou_threshold', 0.3),
-        adaptive_noise=True
+        max_lost_frames=config['tracking'].get('max_lost_frames', 10),  # Shorter recovery window
+        min_confidence=config['tracking'].get('min_confidence', 0.08),  # Lower threshold for marginal detections
+        iou_threshold=config['tracking'].get('iou_threshold', 0.2),  # More permissive for fast moving ball
+        adaptive_noise=True  # Kalman filter adapts to ball movement
     )
+    print(f"   → Tracker config: max_lost={tracker.max_lost_frames}, min_conf={tracker.min_confidence:.2f}, iou={tracker.iou_threshold:.2f}")
     
     # Start MJPEG server
     print("[4/5] Starting MJPEG server on port 8554...")
@@ -58,9 +59,9 @@ def main():
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Initialize virtual camera
-    # Use 1600x900 for high quality tracking window
-    output_width = 1600
-    output_height = 900
+    # Use 960x540 for better FPS - tight zoom like a cameraman following the ball
+    output_width = 960
+    output_height = 540
     camera_config = config.get('camera', {})
     
     virtual_camera = VirtualCamera(
@@ -68,13 +69,16 @@ def main():
         frame_height=reader.height,
         output_width=output_width,
         output_height=output_height,
-        dead_zone_percent=camera_config.get('dead_zone', 0.10),
-        anticipation_factor=camera_config.get('anticipation', 0.3),
-        zoom_padding=camera_config.get('zoom_padding', 1.2),
+        dead_zone_percent=camera_config.get('dead_zone', 0.08),  # Smaller dead zone = more responsive
+        anticipation_factor=camera_config.get('anticipation', 0.5),  # High anticipation for fast ball
+        zoom_padding=camera_config.get('zoom_padding', 1.1),  # TIGHT zoom - minimal padding
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.0),
-        smoothing_beta=camera_config.get('smoothing_beta', 0.007)
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 0.8),  # Less smoothing = more responsive
+        smoothing_beta=camera_config.get('smoothing_beta', 0.005),
+        use_pid=True,  # Enable PID control for smooth tracking
+        prediction_steps=8  # Predict more frames ahead for anticipation
     )
+    print(f"   → Camera config: {output_width}x{output_height}, dead_zone={0.08:.2f}, zoom_padding={1.1:.1f}")
     
     ball_class_id = config['model'].get('ball_class_id', 0)
     
@@ -86,6 +90,9 @@ def main():
     frame_count = 0
     last_log_time = time.time()
     fps_history = []
+    camera_initialized = False
+    detection_count = 0
+    lost_count = 0
     
     try:
         while True:
@@ -114,33 +121,73 @@ def main():
             # Update tracker
             track_result = tracker.update(ball_detection, all_detections)
             
-            # Update virtual camera
-            if track_result:
+            # Initialize camera on first valid detection
+            if not camera_initialized and track_result:
+                x, y, is_tracking = track_result
+                # Initialize camera centered on first ball detection
+                virtual_camera.reset()
+                # Update camera position
+                crop_coords = virtual_camera.update(x, y, time.time())
+                camera_initialized = True
+                print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
+            elif track_result:
                 x, y, is_tracking = track_result
                 crop_coords = virtual_camera.update(x, y, time.time())
+                detection_count += 1
+                lost_count = 0  # Reset lost counter
             else:
+                # No tracking - keep current position
                 crop_coords = virtual_camera.get_current_crop()
+                lost_count += 1
             
             # Crop frame
             x1, y1, x2, y2 = crop_coords
             cropped = frame[y1:y2, x1:x2].copy()
             
             # Draw detection on cropped frame
-            if ball_detection and track_result:
-                bx, by, bw, bh, conf = ball_detection
-                rel_x = int(bx - x1)
-                rel_y = int(by - y1)
-                rel_w = int(bw)
-                rel_h = int(bh)
+            if track_result:
+                x, y, is_tracking = track_result
+                # Convert absolute coordinates to relative (within crop)
+                rel_x = int(x - x1)
+                rel_y = int(y - y1)
                 
-                cv2.rectangle(cropped, 
-                             (rel_x - rel_w//2, rel_y - rel_h//2),
-                             (rel_x + rel_w//2, rel_y + rel_h//2),
-                             (0, 255, 0), 2)
-                cv2.circle(cropped, (rel_x, rel_y), 5, (0, 255, 0), -1)
-                cv2.putText(cropped, f"{conf:.2f}", 
-                           (rel_x + 10, rel_y - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                # Draw tracking indicator
+                if is_tracking:
+                    # Active tracking - green circle and crosshair
+                    cv2.circle(cropped, (rel_x, rel_y), 15, (0, 255, 0), 3)
+                    cv2.circle(cropped, (rel_x, rel_y), 5, (0, 255, 0), -1)
+                    # Crosshair
+                    cv2.line(cropped, (rel_x - 20, rel_y), (rel_x + 20, rel_y), (0, 255, 0), 2)
+                    cv2.line(cropped, (rel_x, rel_y - 20), (rel_x, rel_y + 20), (0, 255, 0), 2)
+                else:
+                    # Predicted position - yellow circle
+                    cv2.circle(cropped, (rel_x, rel_y), 15, (0, 255, 255), 3)
+                    cv2.circle(cropped, (rel_x, rel_y), 5, (0, 255, 255), -1)
+                
+                # Draw bounding box if we have detection
+                if ball_detection:
+                    bx, by, bw, bh, conf = ball_detection
+                    bbox_x = int(bx - x1)
+                    bbox_y = int(by - y1)
+                    bbox_w = int(bw)
+                    bbox_h = int(bh)
+                    
+                    cv2.rectangle(cropped,
+                                (bbox_x - bbox_w//2, bbox_y - bbox_h//2),
+                                (bbox_x + bbox_w//2, bbox_y + bbox_h//2),
+                                (0, 255, 0), 2)
+                    
+                    # Confidence label
+                    cv2.putText(cropped, f"Ball: {conf:.2f}",
+                               (bbox_x - bbox_w//2, bbox_y - bbox_h//2 - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            else:
+                # No tracking - draw "LOST" indicator in center
+                center_x = cropped.shape[1] // 2
+                center_y = cropped.shape[0] // 2
+                cv2.putText(cropped, "SEARCHING...",
+                           (center_x - 100, center_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
             
             # Calculate FPS
             loop_time = (time.time() - loop_start) * 1000
@@ -151,22 +198,41 @@ def main():
             
             avg_fps = np.mean(fps_history)
             
-            # Overlay stats
+            # Overlay stats with background for readability
+            stats_bg_height = 120
+            overlay = cropped.copy()
+            cv2.rectangle(overlay, (5, 5), (350, stats_bg_height), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.5, cropped, 0.5, 0, cropped)
+            
             cv2.putText(cropped, f"FPS: {avg_fps:.1f}", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(cropped, f"Inference: {inf_time:.1f}ms", (10, 60), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
             if track_result:
-                cv2.putText(cropped, "Tracking: ACTIVE", (10, 90), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                x, y, is_tracking = track_result
+                status_text = "TRACKING" if is_tracking else "PREDICTING"
+                status_color = (0, 255, 0) if is_tracking else (0, 255, 255)
+                cv2.putText(cropped, f"Status: {status_text}", (10, 90), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
             else:
-                cv2.putText(cropped, "Tracking: LOST", (10, 90), 
+                cv2.putText(cropped, "Status: LOST", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            # Update MJPEG server with high quality
-            # Keep 1280x720 for better quality (browser will scale if needed)
-            mjpeg_server.update_frame(cropped)
+            # Show detection stats and zoom level
+            cv2.putText(cropped, f"Detections: {detection_count}", (10, 120), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            # Show "CAMERAMAN MODE" indicator
+            zoom_text = "ZOOM: TIGHT (1.1x)"
+            cv2.putText(cropped, zoom_text, (cropped.shape[1] - 220, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+            
+            # Resize for even better FPS - 720x405 is perfect for streaming
+            display_frame = cv2.resize(cropped, (720, 405), interpolation=cv2.INTER_LINEAR)
+            
+            # Update MJPEG server
+            mjpeg_server.update_frame(display_frame)
             
             frame_count += 1
             
@@ -175,7 +241,15 @@ def main():
                 current_time = time.time()
                 elapsed = current_time - last_log_time
                 actual_fps = 30 / elapsed if elapsed > 0 else 0
-                print(f"[STREAM] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | Inf: {inf_time:5.1f}ms | Loop: {loop_time:5.1f}ms")
+                
+                # Detailed tracking stats
+                tracking_status = "ACTIVE" if track_result and track_result[2] else "LOST" if not track_result else "PRED"
+                if track_result:
+                    x, y, _ = track_result
+                    print(f"[STREAM] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | Inf: {inf_time:5.1f}ms | Track: {tracking_status} ({x:.0f},{y:.0f}) | Dets: {detection_count}")
+                else:
+                    print(f"[STREAM] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | Inf: {inf_time:5.1f}ms | Track: {tracking_status} | Lost: {lost_count}")
+                
                 last_log_time = current_time
     
     except KeyboardInterrupt:

@@ -1,6 +1,6 @@
 model:
   path: "models/checkpoint_best_total.pth"
-  confidence: 0.15
+  confidence: 0.12
   iou_threshold: 0.45
   device: "cuda"
   half_precision: true
