@@ -58,13 +58,21 @@ def main():
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Initialize virtual camera
+    output_width = config.get('output', {}).get('width', 1920)
+    output_height = config.get('output', {}).get('height', 1080)
+    camera_config = config.get('camera', {})
+    
     virtual_camera = VirtualCamera(
         frame_width=reader.width,
         frame_height=reader.height,
-        output_width=config['camera']['output_width'],
-        output_height=config['camera']['output_height'],
-        max_speed=config['camera']['max_speed'],
-        smoothing=config['camera']['smoothing']
+        output_width=output_width,
+        output_height=output_height,
+        dead_zone_percent=camera_config.get('dead_zone', 0.10),
+        anticipation_factor=camera_config.get('anticipation', 0.3),
+        zoom_padding=camera_config.get('zoom_padding', 1.2),
+        smoothing_freq=camera_config.get('smoothing_freq', 30.0),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.0),
+        smoothing_beta=camera_config.get('smoothing_beta', 0.007)
     )
     
     ball_class_id = config['model'].get('ball_class_id', 0)
