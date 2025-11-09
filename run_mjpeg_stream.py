@@ -59,9 +59,9 @@ def main():
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Initialize virtual camera
-    # Use 960x540 for better FPS - tight zoom like a cameraman following the ball
-    output_width = 960
-    output_height = 540
+    # Use 480x270 for MAXIMUM ZOOM - only ball area visible (4x zoom)
+    output_width = 480
+    output_height = 270
     camera_config = config.get('camera', {})
     
     virtual_camera = VirtualCamera(
@@ -71,14 +71,15 @@ def main():
         output_height=output_height,
         dead_zone_percent=camera_config.get('dead_zone', 0.08),  # Smaller dead zone = more responsive
         anticipation_factor=camera_config.get('anticipation', 0.5),  # High anticipation for fast ball
-        zoom_padding=camera_config.get('zoom_padding', 1.1),  # TIGHT zoom - minimal padding
+        zoom_padding=camera_config.get('zoom_padding', 1.0),  # NO EXTRA PADDING - exact crop size
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
         smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 0.8),  # Less smoothing = more responsive
         smoothing_beta=camera_config.get('smoothing_beta', 0.005),
         use_pid=True,  # Enable PID control for smooth tracking
         prediction_steps=8  # Predict more frames ahead for anticipation
     )
-    print(f"   → Camera config: {output_width}x{output_height}, dead_zone={0.08:.2f}, zoom_padding={1.1:.1f}")
+    print(f"   → Camera config: {output_width}x{output_height} crop from {reader.width}x{reader.height}, zoom_padding=1.0 (FIXED)")
+    print(f"   → Zoom ratio: {reader.width/output_width:.1f}x (MAXIMUM)")
     
     ball_class_id = config['model'].get('ball_class_id', 0)
     
@@ -223,13 +224,14 @@ def main():
             cv2.putText(cropped, f"Detections: {detection_count}", (10, 120), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
-            # Show "CAMERAMAN MODE" indicator
-            zoom_text = "ZOOM: TIGHT (1.1x)"
-            cv2.putText(cropped, zoom_text, (cropped.shape[1] - 220, 30), 
+            # Show "CAMERAMAN MODE" indicator with actual zoom ratio
+            zoom_ratio = reader.width / 480  # 1920/480 = 4x
+            zoom_text = f"ZOOM: {zoom_ratio:.1f}x"
+            cv2.putText(cropped, zoom_text, (cropped.shape[1] - 150, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
             
-            # Resize for even better FPS - 720x405 is perfect for streaming
-            display_frame = cv2.resize(cropped, (720, 405), interpolation=cv2.INTER_LINEAR)
+            # Upscale for better visibility - 854x480 from 480x270
+            display_frame = cv2.resize(cropped, (854, 480), interpolation=cv2.INTER_LINEAR)
             
             # Update MJPEG server
             mjpeg_server.update_frame(display_frame)

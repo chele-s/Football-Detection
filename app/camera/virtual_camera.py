@@ -270,10 +270,11 @@ class VirtualCamera:
         self.position_history.append(np.array([smooth_x, smooth_y]))
         self.velocity_history.append(self.velocity.copy())
         
-        dynamic_zoom = self._compute_dynamic_zoom(velocity_magnitude, curvature)
-        if abs(dynamic_zoom - self.zoom_padding) > 0.05:
-            self.set_zoom(dynamic_zoom)
-            self.stats['zoom_adjustments'] += 1
+        # Disable dynamic zoom for tight, fixed zoom on ball
+        # dynamic_zoom = self._compute_dynamic_zoom(velocity_magnitude, curvature)
+        # if abs(dynamic_zoom - self.zoom_padding) > 0.05:
+        #     self.set_zoom(dynamic_zoom)
+        #     self.stats['zoom_adjustments'] += 1
         
         crop = self._calculate_crop(smooth_x, smooth_y)
         
