@@ -184,6 +184,11 @@ def main():
     det_consist_need = 2
     center_lp = None
     zoom_target_lp = 1.0
+    roi_active = False
+    roi_stable_frames = 0
+    roi_ready_frames = 35
+    roi_fail_count = 0
+    roi_fail_max = 6
     
     try:
         while True:
@@ -198,14 +203,49 @@ def main():
             follow_cx, follow_cy = None, None
             
             start_inf = time.time()
-            det_result = detector.predict_ball_only(
-                frame, 
-                ball_class_id, 
-                return_candidates=True
-            )
+            use_roi = False
+            offx, offy = 0, 0
+            if prev_crop is not None and roi_active:
+                rx1, ry1, rx2, ry2 = prev_crop
+                rx1 = max(0, min(reader.width-2, int(rx1)))
+                ry1 = max(0, min(reader.height-2, int(ry1)))
+                rx2 = max(rx1+2, min(reader.width, int(rx2)))
+                ry2 = max(ry1+2, min(reader.height, int(ry2)))
+                frame_in = frame[ry1:ry2, rx1:rx2]
+                use_roi = True
+                offx, offy = rx1, ry1
+                det_result = detector.predict_ball_only(
+                    frame_in,
+                    ball_class_id,
+                    use_temporal_filtering=False,
+                    return_candidates=True
+                )
+            else:
+                det_result = detector.predict_ball_only(
+                    frame, 
+                    ball_class_id, 
+                    return_candidates=True
+                )
             inf_time = (time.time() - start_inf) * 1000
             
             ball_detection, all_detections = det_result
+            if use_roi:
+                if ball_detection is not None:
+                    bx, by, bw, bh, bc = ball_detection
+                    ball_detection = (bx + offx, by + offy, bw, bh, bc)
+                if all_detections:
+                    mapped = []
+                    for d in all_detections:
+                        mapped.append((d[0] + offx, d[1] + offy, d[2], d[3], d[4], d[5]))
+                    all_detections = mapped
+                if roi_active:
+                    if ball_detection is None:
+                        roi_fail_count += 1
+                    else:
+                        roi_fail_count = 0
+                    if roi_fail_count >= roi_fail_max:
+                        roi_active = False
+                        roi_fail_count = 0
             
             track_result = tracker.update(ball_detection, all_detections)
             
@@ -247,6 +287,13 @@ def main():
                     if det_ok:
                         x, y = bx, by
                         is_tracking = True
+                    if det_ok:
+                        roi_stable_frames += 1
+                    else:
+                        roi_stable_frames = max(roi_stable_frames - 1, 0)
+                    if (not roi_active) and roi_stable_frames >= roi_ready_frames:
+                        roi_active = True
+                        roi_fail_count = 0
 
                 if is_tracking and kalman_ok and cooldown == 0:
                     d = math.hypot(x - last_stable[0], y - last_stable[1])
@@ -404,6 +451,7 @@ def main():
                 target_zoom_level = 1.0
                 zoom_lock_count = 0
                 hold_zoom_level = 1.0
+                roi_active = False
             
             dz = target_zoom_level - zoom_target_lp
             az_t = 0.28 if abs(dz) > 0.25 else 0.18
