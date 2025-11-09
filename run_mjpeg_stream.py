@@ -110,14 +110,23 @@ def main():
             ball_detection = None
             all_detections = []
             
+            # Debug: check what we got
+            if frame_count == 1:
+                print(f"[DEBUG] det_result type: {type(det_result)}")
+                print(f"[DEBUG] det_result value: {det_result}")
+                if isinstance(det_result, tuple):
+                    print(f"[DEBUG] det_result length: {len(det_result)}")
+                    for i, item in enumerate(det_result):
+                        print(f"[DEBUG] det_result[{i}]: type={type(item)}, value={item}")
+            
             if isinstance(det_result, tuple) and len(det_result) == 2:
                 ball_detection, all_detections = det_result
             elif isinstance(det_result, tuple) and len(det_result) > 0:
-                ball_detection = det_result[0]
+                ball_detection = det_result[0] if det_result[0] is not None else None
                 if len(det_result) > 1:
                     all_detections = det_result[1] if isinstance(det_result[1], list) else []
             else:
-                ball_detection = det_result
+                ball_detection = det_result if det_result is not None else None
             
             # Update tracker
             track_result = tracker.update(ball_detection, all_detections)
