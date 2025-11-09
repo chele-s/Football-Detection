@@ -1,5 +1,5 @@
 stream:
-  input_url: "https://www.youtube.com/watch?v=VIDEO_ID"
+  input_url: "https://youtu.be/pbuU3zTfyQI?si=9fVL8Kcd449KlPQQ"
   output_url: "rtmp://localhost/live/output"
   target_fps: 20
   bitrate: "4000k"

@@ -7,13 +7,6 @@ from pyngrok import ngrok
 import time
 
 def setup_tunnel(port=8554, authtoken=None):
-    """
-    Crea un túnel ngrok para el MJPEG server
-    
-    Args:
-        port: Puerto del MJPEG server (default: 8554)
-        authtoken: Tu ngrok authtoken (obtenerlo de https://dashboard.ngrok.com/get-started/your-authtoken)
-    """
     print("🔧 Configurando túnel ngrok...")
     
     if authtoken:
@@ -57,12 +50,7 @@ def setup_tunnel(port=8554, authtoken=None):
         print("3. Cierra otros túneles activos de ngrok")
 
 if __name__ == "__main__":
-    # OPCIÓN 1: Sin authtoken (túnel limitado)
-    # setup_tunnel()
-    
-    # OPCIÓN 2: Con authtoken (túnel estable)
-    # Reemplaza 'YOUR_NGROK_AUTHTOKEN' con tu token real
-    YOUR_AUTHTOKEN = None  # Cambia esto por tu token
+    YOUR_AUTHTOKEN = None 
     
     if YOUR_AUTHTOKEN:
         setup_tunnel(authtoken=YOUR_AUTHTOKEN)

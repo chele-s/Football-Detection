@@ -94,15 +94,16 @@ def main():
     print(f"   → Tracker config: max_lost={tracker.max_lost_frames}, min_conf={tracker.min_confidence:.2f}, iou={tracker.iou_threshold:.2f}")
     
     # Start MJPEG server
-    print("[4/5] Starting MJPEG server on port 8554...")
-    mjpeg_server = MJPEGServer(port=8554)
+    mjpeg_port = config.get('stream', {}).get('mjpeg_port', 8554)
+    print(f"[4/5] Starting MJPEG server on port {mjpeg_port}...")
+    mjpeg_server = MJPEGServer(port=mjpeg_port)
     mjpeg_server.start()
     print("✅ MJPEG server started!")
     print("📺 Stream URL: http://localhost:8554/stream.mjpg")
     print("💡 En Colab, usa ngrok para exponer el puerto 8554")
     
     # Open video
-    video_path = '/content/football.mp4'
+    video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
     print(f"\n[5/5] Opening video: {video_path}")
     reader = VideoReader(video_path)
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
