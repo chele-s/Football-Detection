@@ -238,7 +238,8 @@ def main():
                 else:
                     det_result = detector.predict_ball_only(
                         frame, 
-                        ball_class_id, 
+                        ball_class_id,
+                        use_temporal_filtering=True,
                         return_candidates=True
                     )
                 inf_time = (time.time() - start_inf) * 1000
@@ -300,7 +301,7 @@ def main():
                         step_ok = step_det <= close_thresh * 1.3
                     aspect = (bw / bh) if bh > 0 else 1.0
                     area = bw * bh
-                    det_raw_ok = (bconf >= 0.24) and step_ok and (0.65 <= aspect <= 1.45) and (area >= area_min and area <= area_max)
+                    det_raw_ok = (bconf >= 0.18) and step_ok and (0.60 <= aspect <= 1.50) and (area >= area_min and area <= area_max)
                     if det_raw_ok:
                         det_consist += 1
                     else:
@@ -311,20 +312,11 @@ def main():
                         far_reacquire_count += 1
                     else:
                         far_reacquire_count = max(far_reacquire_count - 1, 0)
-                    # Spatial cluster gating when not tracking: require loose clustering only until far_reacquire is satisfied
-                    if det_raw_ok:
-                        reacq_points.append((bx, by))
-                        if len(reacq_points) > 10:
-                            reacq_points.pop(0)
-                    cluster_ok = True
-                    if (not is_tracking) and (far_reacquire_count < far_reacquire_need) and len(reacq_points) >= 4:
-                        mx = sum(p[0] for p in reacq_points) / len(reacq_points)
-                        my = sum(p[1] for p in reacq_points) / len(reacq_points)
-                        dists = [math.hypot(p[0]-mx, p[1]-my) for p in reacq_points]
-                        count_in = sum(1 for d in dists if d <= close_thresh * 1.2)
-                        cluster_ok = count_in >= 3
-                    consist_need = det_consist_need + 1 if not is_tracking else det_consist_need
-                    det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need) and cluster_ok
+                    if last_stable is None:
+                        det_ok = det_raw_ok
+                    else:
+                        consist_need = det_consist_need
+                        det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
                     if det_ok:
                         x, y = bx, by
                         is_tracking = True
@@ -517,6 +509,9 @@ def main():
                 else:
                     zoom_cx = int(0.8*x + 0.2*(anchor[0] if anchor else x))
                     zoom_cy = int(0.8*y + 0.2*(anchor[1] if anchor else y))
+            else:
+                zoom_cx = (x1 + x2) // 2
+                zoom_cy = (y1 + y2) // 2
             # Clamp zoom center to safe margins to avoid edge jitter/dark areas
             safe_margin = max(8, int(diag * 0.02))
             if zoom_cx < safe_margin:
@@ -527,9 +522,6 @@ def main():
                 zoom_cy = safe_margin
             if zoom_cy > reader.height - safe_margin:
                 zoom_cy = reader.height - safe_margin
-            else:
-                zoom_cx = (x1 + x2) // 2
-                zoom_cy = (y1 + y2) // 2
 
             if prev_zoom_center is not None:
                 zfac = max(0.0, min(1.0, current_zoom_level - 1.0))
@@ -632,6 +624,20 @@ def main():
                 cv2.putText(cropped, "SEARCHING...",
                            (center_x - 100, center_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+
+            if (not track_result) and ball_detection:
+                bx, by, bw, bh, conf = ball_detection
+                bbox_x = int(bx - x1)
+                bbox_y = int(by - y1)
+                bbox_w = int(bw)
+                bbox_h = int(bh)
+                cv2.rectangle(cropped,
+                              (bbox_x - bbox_w//2, bbox_y - bbox_h//2),
+                              (bbox_x + bbox_w//2, bbox_y + bbox_h//2),
+                              (0, 255, 255), 2)
+                cv2.putText(cropped, f"Ball: {conf:.2f}",
+                           (bbox_x - bbox_w//2, bbox_y - bbox_h//2 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             
             if bloom_counter > 0:
                 intensity = bloom_counter / bloom_max
