@@ -58,8 +58,9 @@ def main():
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Initialize virtual camera
-    output_width = config.get('output', {}).get('width', 1920)
-    output_height = config.get('output', {}).get('height', 1080)
+    # Use smaller output size to force cropping (tracking window)
+    output_width = 1280
+    output_height = 720
     camera_config = config.get('camera', {})
     
     virtual_camera = VirtualCamera(
