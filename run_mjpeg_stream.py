@@ -135,7 +135,7 @@ def main():
     frames_tracking = 0
     frames_required_for_zoom = 4
 
-    zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.085, damping=0.42, max_rate=0.16)
+    zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.070, damping=0.55, max_rate=0.12)
     diag = int(math.hypot(reader.width, reader.height))
     stable_step_px = max(6, int(diag * 0.030))
     jump_reset_px = max(36, int(diag * 0.050))
@@ -157,6 +157,11 @@ def main():
     recent_positions = []
     close_counter = 0
     close_thresh = max(14, int(diag * 0.050))
+    last_det = None
+    prev_zoom_center = None
+    prev_crop = None
+    max_crop_step_base = max(8, int(diag * 0.018))
+    recent_dets = []
     
     try:
         while True:
@@ -170,7 +175,6 @@ def main():
                 continue
             follow_cx, follow_cy = None, None
             
-            # Detect ball
             start_inf = time.time()
             det_result = detector.predict_ball_only(
                 frame, 
@@ -179,14 +183,10 @@ def main():
             )
             inf_time = (time.time() - start_inf) * 1000
             
-            # Parse detection  
-            # det_result is always (detection_tuple, all_detections) when return_candidates=True
             ball_detection, all_detections = det_result
             
-            # Update tracker
             track_result = tracker.update(ball_detection, all_detections)
             
-            # Initialize camera on first valid detection
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
                 virtual_camera.reset()
@@ -205,6 +205,19 @@ def main():
                 if anchor is None:
                     anchor = (x, y)
                 use_x, use_y = x, y
+                det_ok = False
+                if ball_detection:
+                    bx, by, bw, bh, bconf = ball_detection
+                    step_ok = True
+                    if last_det is not None:
+                        dx_det = bx - last_det[0]
+                        dy_det = by - last_det[1]
+                        step_det = math.hypot(dx_det, dy_det)
+                        step_ok = step_det <= close_thresh * 1.3
+                    det_ok = bconf >= 0.25 and step_ok
+                    if det_ok:
+                        x, y = bx, by
+                        is_tracking = True
 
                 if is_tracking and kalman_ok and cooldown == 0:
                     d = math.hypot(x - last_stable[0], y - last_stable[1])
@@ -230,7 +243,7 @@ def main():
                         frames_tracking = max(frames_tracking - 1, 0)
                         stability_score = max(stability_score - 0.05, 0.0)
 
-                if anchor is not None:
+                if anchor is not None and is_tracking:
                     dx = use_x - anchor[0]
                     dy = use_y - anchor[1]
                     dist = math.hypot(dx, dy)
@@ -239,10 +252,19 @@ def main():
                         r = cur_step / dist
                         anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
                     else:
-                        anchor = (use_x, use_y)
+                        a_anch = 0.12 + 0.20 * max(0.0, current_zoom_level - 1.0)
+                        if a_anch > 0.45:
+                            a_anch = 0.45
+                        anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
                     use_x, use_y = anchor
 
-                crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=tracker.get_velocity())
+                if ball_detection and last_det is not None:
+                    dvx = ball_detection[0] - last_det[0]
+                    dvy = ball_detection[1] - last_det[1]
+                    vhx, vhy = dvx, dvy
+                else:
+                    vhx, vhy = tracker.get_velocity()
+                crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
                 detection_count += 1
                 lost_count = 0
 
@@ -268,6 +290,11 @@ def main():
                         fy = (anchor[1] if anchor else y) + uy*lead_px
                         follow_cx, follow_cy = int(max(0, min(reader.width-1, fx))), int(max(0, min(reader.height-1, fy)))
                 last_raw = (x, y)
+                if ball_detection:
+                    last_det = (ball_detection[0], ball_detection[1])
+                    recent_dets.append((ball_detection[0], ball_detection[1]))
+                    if len(recent_dets) > 10:
+                        recent_dets.pop(0)
                 recent_positions.append((x, y))
                 if len(recent_positions) > 12:
                     recent_positions.pop(0)
@@ -286,20 +313,41 @@ def main():
                         close_counter = max(close_counter - 1, 0)
 
                 dist_anchor_ball = math.hypot((anchor[0] if anchor else x) - x, (anchor[1] if anchor else y) - y)
-                zoom_gate_ok = (stability_score >= 0.40 or frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2) and cooldown == 0
+                zoom_gate_ok = (det_ok) or (is_tracking and cooldown == 0 and (stability_score >= 0.40 or frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2))
                 if zoom_gate_ok:
-                    if vmag > 950:
-                        target_zoom_level = 1.30
-                    elif vmag > 650:
-                        target_zoom_level = 1.50
-                    elif vmag > 380:
-                        target_zoom_level = 1.75
+                    det_zoom = None
+                    if det_ok and len(recent_dets) >= 3:
+                        ttot = 0.0
+                        tcnt = 0
+                        for i in range(len(recent_dets) - 1):
+                            ttot += math.hypot(recent_dets[i+1][0]-recent_dets[i][0], recent_dets[i+1][1]-recent_dets[i][1])
+                            tcnt += 1
+                        avg_det_step = ttot / tcnt if tcnt > 0 else 0.0
+                        if avg_det_step <= close_thresh * 0.6:
+                            det_zoom = 2.20
+                        elif avg_det_step <= close_thresh * 1.1:
+                            det_zoom = 1.90
+                        else:
+                            det_zoom = 1.55
+                    if det_zoom is not None:
+                        target_zoom_level = min(max_zoom_level, det_zoom)
                     else:
-                        target_zoom_level = 2.15
+                        if vmag > 950:
+                            target_zoom_level = 1.30
+                        elif vmag > 650:
+                            target_zoom_level = 1.50
+                        elif vmag > 380:
+                            target_zoom_level = 1.75
+                        else:
+                            target_zoom_level = 2.15
                     zoom_lock_count = zoom_lock_max
                     hold_zoom_level = target_zoom_level
                 else:
-                    if zoom_lock_count > 0:
+                    if not is_tracking:
+                        zoom_lock_count = 0
+                        hold_zoom_level = 1.0
+                        target_zoom_level = 1.0
+                    elif zoom_lock_count > 0:
                         zoom_lock_count -= 1
                         hold_zoom_level = max(1.2, hold_zoom_level * 0.98)
                         target_zoom_level = hold_zoom_level
@@ -321,7 +369,7 @@ def main():
             x1, y1, x2, y2 = crop_coords
             if track_result:
                 if follow_cx is not None and follow_cy is not None:
-                    wz = 0.65
+                    wz = 0.55
                     ax = (anchor[0] if anchor else follow_cx)
                     ay = (anchor[1] if anchor else follow_cy)
                     zoom_cx = int(wz*follow_cx + (1.0-wz)*ax)
@@ -332,6 +380,13 @@ def main():
             else:
                 zoom_cx = (x1 + x2) // 2
                 zoom_cy = (y1 + y2) // 2
+
+            if prev_zoom_center is not None:
+                zfac = max(0.0, min(1.0, current_zoom_level - 1.0))
+                az = 0.25 + 0.20 * zfac
+                zoom_cx = int(prev_zoom_center[0] * (1.0 - az) + zoom_cx * az)
+                zoom_cy = int(prev_zoom_center[1] * (1.0 - az) + zoom_cy * az)
+            prev_zoom_center = (zoom_cx, zoom_cy)
 
             if current_zoom_level > 1.0:
                 crop_width = x2 - x1
@@ -353,51 +408,59 @@ def main():
                     my = int(zoomed_height * 0.30)
                     if rel_x < mx:
                         shift = mx - rel_x
-                        x1 = max(0, min(reader.width - zoomed_width, x1 - shift))
+                        s = max(1, int(shift * 0.6))
+                        x1 = max(0, min(reader.width - zoomed_width, x1 - s))
                         x2 = x1 + zoomed_width
                     elif rel_x > zoomed_width - mx:
                         shift = rel_x - (zoomed_width - mx)
-                        x1 = max(0, min(reader.width - zoomed_width, x1 + shift))
+                        s = max(1, int(shift * 0.6))
+                        x1 = max(0, min(reader.width - zoomed_width, x1 + s))
                         x2 = x1 + zoomed_width
                     if rel_y < my:
                         shift = my - rel_y
-                        y1 = max(0, min(reader.height - zoomed_height, y1 - shift))
+                        s = max(1, int(shift * 0.6))
+                        y1 = max(0, min(reader.height - zoomed_height, y1 - s))
                         y2 = y1 + zoomed_height
                     elif rel_y > zoomed_height - my:
                         shift = rel_y - (zoomed_height - my)
-                        y1 = max(0, min(reader.height - zoomed_height, y1 + shift))
+                        s = max(1, int(shift * 0.6))
+                        y1 = max(0, min(reader.height - zoomed_height, y1 + s))
                         y2 = y1 + zoomed_height
             
             x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
+            if prev_crop is not None:
+                pcx1, pcy1, pcx2, pcy2 = prev_crop
+                step_lim = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 2.0))
+                if abs(x1 - pcx1) > step_lim:
+                    x1 = pcx1 + step_lim if x1 > pcx1 else pcx1 - step_lim
+                    x2 = x1 + (pcx2 - pcx1)
+                if abs(y1 - pcy1) > step_lim:
+                    y1 = pcy1 + step_lim if y1 > pcy1 else pcy1 - step_lim
+                    y2 = y1 + (pcy2 - pcy1)
             if x1 < 0: x1 = 0
             if y1 < 0: y1 = 0
             if x2 > reader.width: x2 = reader.width
             if y2 > reader.height: y2 = reader.height
             if x2 <= x1: x2 = min(reader.width, x1 + 2)
             if y2 <= y1: y2 = min(reader.height, y1 + 2)
+            prev_crop = (x1, y1, x2, y2)
             cropped = frame[y1:y2, x1:x2].copy()
             
-            # Draw detection on cropped frame
+            
             if track_result:
                 x, y, is_tracking = track_result
-                # Convert absolute coordinates to relative (within crop)
                 rel_x = int(x - x1)
                 rel_y = int(y - y1)
                 
-                # Draw tracking indicator
                 if is_tracking:
-                    # Active tracking - green circle and crosshair
                     cv2.circle(cropped, (rel_x, rel_y), 15, (0, 255, 0), 3)
                     cv2.circle(cropped, (rel_x, rel_y), 5, (0, 255, 0), -1)
-                    # Crosshair
                     cv2.line(cropped, (rel_x - 20, rel_y), (rel_x + 20, rel_y), (0, 255, 0), 2)
                     cv2.line(cropped, (rel_x, rel_y - 20), (rel_x, rel_y + 20), (0, 255, 0), 2)
                 else:
-                    # Predicted position - yellow circle
                     cv2.circle(cropped, (rel_x, rel_y), 15, (0, 255, 255), 3)
                     cv2.circle(cropped, (rel_x, rel_y), 5, (0, 255, 255), -1)
                 
-                # Draw bounding box if we have detection
                 if ball_detection:
                     bx, by, bw, bh, conf = ball_detection
                     bbox_x = int(bx - x1)
@@ -410,19 +473,16 @@ def main():
                                 (bbox_x + bbox_w//2, bbox_y + bbox_h//2),
                                 (0, 255, 0), 2)
                     
-                    # Confidence label
                     cv2.putText(cropped, f"Ball: {conf:.2f}",
                                (bbox_x - bbox_w//2, bbox_y - bbox_h//2 - 10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             else:
-                # No tracking - draw "LOST" indicator in center
                 center_x = cropped.shape[1] // 2
                 center_y = cropped.shape[0] // 2
                 cv2.putText(cropped, "SEARCHING...",
                            (center_x - 100, center_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
             
-            # Calculate FPS
             loop_time = (time.time() - loop_start) * 1000
             fps = 1000 / loop_time if loop_time > 0 else 0
             fps_history.append(fps)
@@ -431,7 +491,6 @@ def main():
             
             avg_fps = np.mean(fps_history)
             
-            # Overlay stats with background for readability
             stats_bg_height = 120
             overlay = cropped.copy()
             cv2.rectangle(overlay, (5, 5), (350, stats_bg_height), (0, 0, 0), -1)
@@ -452,7 +511,6 @@ def main():
                 cv2.putText(cropped, "Status: LOST", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            # Show detection stats and zoom level
             cv2.putText(cropped, f"Detections: {detection_count}", (10, 120), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
@@ -467,35 +525,28 @@ def main():
             cv2.putText(cropped, zoom_text, (cropped.shape[1] - 150, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, zoom_color, 2)
             
-            # Show tracking confidence
             if track_result:
                 x, y, is_tracking = track_result
                 if is_tracking and frames_tracking > 0:
-                    # Active tracking - show progress
                     track_color = (0, 255, 0) if frames_tracking >= frames_required_for_zoom else (255, 255, 0)
                     track_text = f"Lock: {min(frames_tracking, frames_required_for_zoom)}/{frames_required_for_zoom}"
                     cv2.putText(cropped, track_text, (cropped.shape[1] - 150, 60), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, track_color, 2)
                 elif not is_tracking:
-                    # Predicting - show warning
                     cv2.putText(cropped, "PRED (0/15)", (cropped.shape[1] - 150, 60), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
-            # Upscale for better visibility - 854x480 target
             display_frame = cv2.resize(cropped, (854, 480), interpolation=cv2.INTER_LINEAR)
             
-            # Update MJPEG server
             mjpeg_server.update_frame(display_frame)
             
             frame_count += 1
             
-            # Log every 30 frames
             if frame_count % 30 == 0:
                 current_time = time.time()
                 elapsed = current_time - last_log_time
                 actual_fps = 30 / elapsed if elapsed > 0 else 0
                 
-                # Detailed tracking stats
                 tracking_status = "ACTIVE" if track_result and track_result[2] else "LOST" if not track_result else "PRED"
                 if track_result:
                     x, y, _ = track_result
