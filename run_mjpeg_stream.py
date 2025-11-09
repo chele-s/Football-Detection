@@ -168,6 +168,7 @@ def main():
                 reader.release()
                 reader = VideoReader(video_path)
                 continue
+            follow_cx, follow_cy = None, None
             
             # Detect ball
             start_inf = time.time()
