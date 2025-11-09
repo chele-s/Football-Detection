@@ -149,6 +149,8 @@ class StreamPipeline:
             anticipation_factor=self.config['camera']['anticipation'],
             zoom_padding=self.config['camera']['zoom_padding'],
             smoothing_freq=self.target_fps,
+            smoothing_min_cutoff=self.config['camera'].get('smoothing_min_cutoff', 0.6),
+            smoothing_beta=self.config['camera'].get('smoothing_beta', 0.004),
             use_pid=True,
             prediction_steps=5
         )
@@ -184,7 +186,7 @@ class StreamPipeline:
         last_stable = None
         stability_score = 0.0
         anchor = None
-        max_pan_step = max(10, int(diag * 0.022))
+        max_pan_step = max(10, int(diag * 0.018))
         anchor_ready_px = max(28, int(diag * 0.055))
         zoom_lock_count = 0
         zoom_lock_max = 36
@@ -204,7 +206,7 @@ class StreamPipeline:
         area_min = max(64, int(0.00002 * reader.width * reader.height))
         area_max = int(0.030 * reader.width * reader.height)
         det_consist = 0
-        det_consist_need = 2
+        det_consist_need = 4
         roi_active = False
         roi_stable_frames = 0
         roi_ready_frames = 35
@@ -212,6 +214,9 @@ class StreamPipeline:
         roi_fail_max = 6
         bloom_counter = 0
         bloom_max = 12
+        far_reacquire_count = 0
+        far_reacquire_need = 6
+        det_skip = 0
         
         logger.info("Starting main loop... (Press 'q' to quit)")
         
@@ -224,22 +229,33 @@ class StreamPipeline:
                     logger.info("End of stream")
                     break
                 
-                t_inference_start = time.time()
-                use_roi = False
-                offx, offy = 0, 0
-                if prev_crop is not None and roi_active:
-                    rx1, ry1, rx2, ry2 = prev_crop
-                    rx1 = max(0, min(reader.width-2, int(rx1)))
-                    ry1 = max(0, min(reader.height-2, int(ry1)))
-                    rx2 = max(rx1+2, min(reader.width, int(rx2)))
-                    ry2 = max(ry1+2, min(reader.height, int(ry2)))
-                    frame_in = frame[ry1:ry2, rx1:rx2]
-                    use_roi = True
-                    offx, offy = rx1, ry1
-                    det_result = self.detector.predict_ball_only(frame_in, self.ball_class_id, use_temporal_filtering=False, return_candidates=True)
+                do_inference = True
+                if frames_tracking >= 8 and stability_score >= 0.60 and cooldown == 0:
+                    if det_skip > 0:
+                        det_skip -= 1
+                        do_inference = False
+                    else:
+                        det_skip = 1
+                if do_inference:
+                    t_inference_start = time.time()
+                    use_roi = False
+                    offx, offy = 0, 0
+                    if prev_crop is not None and roi_active:
+                        rx1, ry1, rx2, ry2 = prev_crop
+                        rx1 = max(0, min(reader.width-2, int(rx1)))
+                        ry1 = max(0, min(reader.height-2, int(ry1)))
+                        rx2 = max(rx1+2, min(reader.width, int(rx2)))
+                        ry2 = max(ry1+2, min(reader.height, int(ry2)))
+                        frame_in = frame[ry1:ry2, rx1:rx2]
+                        use_roi = True
+                        offx, offy = rx1, ry1
+                        det_result = self.detector.predict_ball_only(frame_in, self.ball_class_id, use_temporal_filtering=False, return_candidates=True)
+                    else:
+                        det_result = self.detector.predict_ball_only(frame, self.ball_class_id, return_candidates=True)
+                    t_inference = (time.time() - t_inference_start) * 1000
                 else:
-                    det_result = self.detector.predict_ball_only(frame, self.ball_class_id, return_candidates=True)
-                t_inference = (time.time() - t_inference_start) * 1000
+                    det_result = (None, None)
+                    t_inference = 0.0
                 self.performance_stats['inference_times'].append(t_inference)
                 if isinstance(det_result, tuple) and len(det_result) == 2 and (
                     det_result[0] is None or isinstance(det_result[0], tuple)
@@ -300,12 +316,18 @@ class StreamPipeline:
                             step_ok = step_det <= close_thresh * 1.3
                         aspect = (bw / bh) if bh > 0 else 1.0
                         area = bw * bh
-                        det_raw_ok = (bconf >= 0.25) and step_ok and (0.75 <= aspect <= 1.35) and (area >= area_min and area <= area_max)
+                        det_raw_ok = (bconf >= 0.28) and step_ok and (0.75 <= aspect <= 1.35) and (area >= area_min and area <= area_max)
                         if det_raw_ok:
                             det_consist += 1
                         else:
                             det_consist = max(det_consist - 1, 0)
-                        det_ok = det_raw_ok and det_consist >= det_consist_need
+                        far_thresh = max(int(diag * 0.22), 180)
+                        d_far = math.hypot(bx - (anchor[0] if anchor else bx), by - (anchor[1] if anchor else by))
+                        if d_far > far_thresh:
+                            far_reacquire_count += 1
+                        else:
+                            far_reacquire_count = max(far_reacquire_count - 1, 0)
+                        det_ok = det_raw_ok and det_consist >= det_consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
                         if det_ok:
                             x, y = bx, by
                             is_tracking = True
@@ -341,9 +363,9 @@ class StreamPipeline:
                             r = cur_step / dist
                             anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
                         else:
-                            a_anch = 0.10 + 0.16 * max(0.0, current_zoom_level - 1.0)
-                            if a_anch > 0.38:
-                                a_anch = 0.38
+                            a_anch = 0.08 + 0.14 * max(0.0, current_zoom_level - 1.0)
+                            if a_anch > 0.32:
+                                a_anch = 0.32
                             anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
                         use_x, use_y = anchor
                     if ball_detection:
@@ -437,6 +459,11 @@ class StreamPipeline:
                 else:
                     zoom_cx = (x1 + x2) // 2
                     zoom_cy = (y1 + y2) // 2
+                safe_margin = max(8, int(diag * 0.02))
+                if zoom_cx < safe_margin: zoom_cx = safe_margin
+                if zoom_cx > reader.width - safe_margin: zoom_cx = reader.width - safe_margin
+                if zoom_cy < safe_margin: zoom_cy = safe_margin
+                if zoom_cy > reader.height - safe_margin: zoom_cy = reader.height - safe_margin
                 if prev_zoom_center is not None:
                     zfac = max(0.0, min(1.0, current_zoom_level - 1.0))
                     az = 0.18 + 0.16 * zfac

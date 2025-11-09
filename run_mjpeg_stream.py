@@ -119,12 +119,12 @@ def main():
         frame_height=reader.height,
         output_width=base_output_width,
         output_height=base_output_height,
-        dead_zone_percent=0.06,
+        dead_zone_percent=0.10,
         anticipation_factor=0.4,
         zoom_padding=camera_config.get('zoom_padding', 1.2),
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.0),
-        smoothing_beta=camera_config.get('smoothing_beta', 0.007),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 0.6),
+        smoothing_beta=camera_config.get('smoothing_beta', 0.004),
         use_pid=True,
         prediction_steps=5
     )
@@ -161,7 +161,7 @@ def main():
     last_stable = None
     stability_score = 0.0
     anchor = None
-    max_pan_step = max(10, int(diag * 0.022))
+    max_pan_step = max(10, int(diag * 0.018))
     anchor_ready_px = max(28, int(diag * 0.055))
     zoom_lock_count = 0
     zoom_lock_max = 36
@@ -182,7 +182,7 @@ def main():
     area_min = max(64, int(0.00002 * reader.width * reader.height))
     area_max = int(0.030 * reader.width * reader.height)
     det_consist = 0
-    det_consist_need = 2
+    det_consist_need = 4
     center_lp = None
     zoom_target_lp = 1.0
     roi_active = False
@@ -192,6 +192,9 @@ def main():
     roi_fail_max = 6
     bloom_counter = 0
     bloom_max = 12
+    far_reacquire_count = 0
+    far_reacquire_need = 6
+    det_skip = 0
     
     try:
         while True:
@@ -208,28 +211,39 @@ def main():
             start_inf = time.time()
             use_roi = False
             offx, offy = 0, 0
-            if prev_crop is not None and roi_active:
-                rx1, ry1, rx2, ry2 = prev_crop
-                rx1 = max(0, min(reader.width-2, int(rx1)))
-                ry1 = max(0, min(reader.height-2, int(ry1)))
-                rx2 = max(rx1+2, min(reader.width, int(rx2)))
-                ry2 = max(ry1+2, min(reader.height, int(ry2)))
-                frame_in = frame[ry1:ry2, rx1:rx2]
-                use_roi = True
-                offx, offy = rx1, ry1
-                det_result = detector.predict_ball_only(
-                    frame_in,
-                    ball_class_id,
-                    use_temporal_filtering=False,
-                    return_candidates=True
-                )
+            do_inference = True
+            if frames_tracking >= 8 and stability_score >= 0.60 and cooldown == 0:
+                if det_skip > 0:
+                    det_skip -= 1
+                    do_inference = False
+                else:
+                    det_skip = 1
+            if do_inference:
+                if prev_crop is not None and roi_active:
+                    rx1, ry1, rx2, ry2 = prev_crop
+                    rx1 = max(0, min(reader.width-2, int(rx1)))
+                    ry1 = max(0, min(reader.height-2, int(ry1)))
+                    rx2 = max(rx1+2, min(reader.width, int(rx2)))
+                    ry2 = max(ry1+2, min(reader.height, int(ry2)))
+                    frame_in = frame[ry1:ry2, rx1:rx2]
+                    use_roi = True
+                    offx, offy = rx1, ry1
+                    det_result = detector.predict_ball_only(
+                        frame_in,
+                        ball_class_id,
+                        use_temporal_filtering=False,
+                        return_candidates=True
+                    )
+                else:
+                    det_result = detector.predict_ball_only(
+                        frame, 
+                        ball_class_id, 
+                        return_candidates=True
+                    )
+                inf_time = (time.time() - start_inf) * 1000
             else:
-                det_result = detector.predict_ball_only(
-                    frame, 
-                    ball_class_id, 
-                    return_candidates=True
-                )
-            inf_time = (time.time() - start_inf) * 1000
+                det_result = (None, None)
+                inf_time = 0.0
             
             ball_detection, all_detections = det_result
             if use_roi:
@@ -281,12 +295,18 @@ def main():
                         step_ok = step_det <= close_thresh * 1.3
                     aspect = (bw / bh) if bh > 0 else 1.0
                     area = bw * bh
-                    det_raw_ok = (bconf >= 0.25) and step_ok and (0.75 <= aspect <= 1.35) and (area >= area_min and area <= area_max)
+                    det_raw_ok = (bconf >= 0.28) and step_ok and (0.75 <= aspect <= 1.35) and (area >= area_min and area <= area_max)
                     if det_raw_ok:
                         det_consist += 1
                     else:
                         det_consist = max(det_consist - 1, 0)
-                    det_ok = det_raw_ok and det_consist >= det_consist_need
+                    far_thresh = max(int(diag * 0.22), 180)
+                    d_far = math.hypot(bx - (anchor[0] if anchor else bx), by - (anchor[1] if anchor else by))
+                    if d_far > far_thresh:
+                        far_reacquire_count += 1
+                    else:
+                        far_reacquire_count = max(far_reacquire_count - 1, 0)
+                    det_ok = det_raw_ok and det_consist >= det_consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
                     if det_ok:
                         x, y = bx, by
                         is_tracking = True
@@ -331,9 +351,9 @@ def main():
                         r = cur_step / dist
                         anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
                     else:
-                        a_anch = 0.10 + 0.16 * max(0.0, current_zoom_level - 1.0)
-                        if a_anch > 0.38:
-                            a_anch = 0.38
+                        a_anch = 0.08 + 0.14 * max(0.0, current_zoom_level - 1.0)
+                        if a_anch > 0.32:
+                            a_anch = 0.32
                         anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
                     use_x, use_y = anchor
 
@@ -341,11 +361,11 @@ def main():
                     if center_lp is None:
                         center_lp = (use_x, use_y)
                     zfac_c = max(0.0, min(1.0, current_zoom_level - 1.0))
-                    ac = 0.26 - 0.12 * zfac_c
-                    if ac < 0.12:
-                        ac = 0.12
-                    if ac > 0.28:
-                        ac = 0.28
+                    ac = 0.18 - 0.10 * zfac_c
+                    if ac < 0.08:
+                        ac = 0.08
+                    if ac > 0.22:
+                        ac = 0.22
                     cx = center_lp[0] * (1.0 - ac) + use_x * ac
                     cy = center_lp[1] * (1.0 - ac) + use_y * ac
                     center_lp = (cx, cy)
@@ -475,6 +495,16 @@ def main():
                 else:
                     zoom_cx = int(0.8*x + 0.2*(anchor[0] if anchor else x))
                     zoom_cy = int(0.8*y + 0.2*(anchor[1] if anchor else y))
+            # Clamp zoom center to safe margins to avoid edge jitter/dark areas
+            safe_margin = max(8, int(diag * 0.02))
+            if zoom_cx < safe_margin:
+                zoom_cx = safe_margin
+            if zoom_cx > reader.width - safe_margin:
+                zoom_cx = reader.width - safe_margin
+            if zoom_cy < safe_margin:
+                zoom_cy = safe_margin
+            if zoom_cy > reader.height - safe_margin:
+                zoom_cy = reader.height - safe_margin
             else:
                 zoom_cx = (x1 + x2) // 2
                 zoom_cy = (y1 + y2) // 2
