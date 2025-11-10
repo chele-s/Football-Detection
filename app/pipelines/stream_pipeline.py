@@ -186,7 +186,7 @@ class StreamPipeline:
         last_stable = None
         stability_score = 0.0
         anchor = None
-        max_pan_step = max(10, int(diag * 0.018))
+        max_pan_step = max(8, int(diag * 0.012))
         anchor_ready_px = max(28, int(diag * 0.055))
         zoom_lock_count = 0
         zoom_lock_max = 36
@@ -391,14 +391,15 @@ class StreamPipeline:
                         dx = use_x - anchor[0]
                         dy = use_y - anchor[1]
                         dist = math.hypot(dx, dy)
-                        cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 2.0 + min(vmag / 350.0, 1.2)))
+                        cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 1.5 + min(vmag / 450.0, 0.8)))
                         if dist > cur_step and dist > 1e-6:
                             r = cur_step / dist
                             anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
                         else:
-                            a_anch = 0.08 + 0.14 * max(0.0, current_zoom_level - 1.0)
-                            if a_anch > 0.32:
-                                a_anch = 0.32
+                            # Reduced alpha for smoother anchor movement
+                            a_anch = 0.04 + 0.08 * max(0.0, current_zoom_level - 1.0)
+                            if a_anch > 0.18:
+                                a_anch = 0.18
                             anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
                         use_x, use_y = anchor
                     if ball_detection:

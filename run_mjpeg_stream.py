@@ -186,7 +186,7 @@ def main():
     zoom_target_lp = 1.0
     roi_active = False
     roi_stable_frames = 0
-    roi_ready_frames = 35
+    roi_ready_frames = 25
     roi_fail_count = 0
     roi_fail_max = 6
     bloom_counter = 0
@@ -261,8 +261,10 @@ def main():
                     else:
                         roi_fail_count = 0
                     if roi_fail_count >= roi_fail_max:
+                        print(f"⚠ ROI lost ball - switching to full-frame detection")
                         roi_active = False
                         roi_fail_count = 0
+                        roi_stable_frames = 0
             
             # Spatial filter: exclude upper region (stands/lights)
             # Only reject detections in the TOP 25% of frame where stands/lights are
@@ -294,14 +296,18 @@ def main():
                 x, y, is_tracking = track_result
                 if not is_tracking:
                     # Freeze camera during search to avoid jitter from predictions
+                    if roi_active:
+                        print(f"⚠ ROI deactivated - back to full-frame detection")
                     roi_active = False
                     roi_fail_count = 0
+                    roi_stable_frames = 0
                 else:
                     # Tracker is confident - activate ROI after a few frames
                     roi_stable_frames += 1
                     if (not roi_active) and roi_stable_frames >= roi_ready_frames:
                         roi_active = True
                         roi_fail_count = 0
+                        print(f"✓ ROI activated - now detecting only in zoom region for performance")
                 state = tracker.get_state()
                 vmag = state['velocity_magnitude'] if state else 0.0
                 kalman_ok = state['kalman_stable'] if state else True
@@ -345,14 +351,15 @@ def main():
                     dx = use_x - anchor[0]
                     dy = use_y - anchor[1]
                     dist = math.hypot(dx, dy)
-                    cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 2.0 + min(vmag / 350.0, 1.2)))
+                    cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 1.5 + min(vmag / 450.0, 0.8)))
                     if dist > cur_step and dist > 1e-6:
                         r = cur_step / dist
                         anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
                     else:
-                        a_anch = 0.08 + 0.14 * max(0.0, current_zoom_level - 1.0)
-                        if a_anch > 0.32:
-                            a_anch = 0.32
+                        # Reduced alpha for smoother anchor movement
+                        a_anch = 0.04 + 0.08 * max(0.0, current_zoom_level - 1.0)
+                        if a_anch > 0.18:
+                            a_anch = 0.18
                         anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
                     use_x, use_y = anchor
 
@@ -360,11 +367,12 @@ def main():
                     if center_lp is None:
                         center_lp = (use_x, use_y)
                     zfac_c = max(0.0, min(1.0, current_zoom_level - 1.0))
-                    ac = 0.18 - 0.10 * zfac_c
-                    if ac < 0.08:
-                        ac = 0.08
-                    if ac > 0.22:
-                        ac = 0.22
+                    # Reduced alpha for smoother center movement
+                    ac = 0.10 - 0.05 * zfac_c
+                    if ac < 0.05:
+                        ac = 0.05
+                    if ac > 0.12:
+                        ac = 0.12
                     cx = center_lp[0] * (1.0 - ac) + use_x * ac
                     cy = center_lp[1] * (1.0 - ac) + use_y * ac
                     center_lp = (cx, cy)
