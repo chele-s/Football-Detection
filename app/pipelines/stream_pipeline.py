@@ -470,7 +470,19 @@ class StreamPipeline:
                     if is_tracking:
                         lost_search_center = None
                     
-                    crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
+                    safe_use_x = use_x
+                    safe_use_y = use_y
+                    crop_half_h = self.virtual_camera.effective_height // 2
+                    crop_half_w = self.virtual_camera.effective_width // 2
+                    
+                    safe_use_x = max(crop_half_w + 20, min(safe_use_x, reader.width - crop_half_w - 20))
+                    safe_use_y = max(crop_half_h + 20, min(safe_use_y, reader.height - crop_half_h - 20))
+                    
+                    if not is_tracking and not ball_detection:
+                        prev_safe_y = self.virtual_camera.current_center_y
+                        safe_use_y = prev_safe_y
+                    
+                    crop_coords = self.virtual_camera.update(safe_use_x, safe_use_y, time.time(), velocity_hint=(vhx, vhy))
                     detection_count += 1
                     lost_count = 0
                     recent_positions.append((x, y))
@@ -616,12 +628,12 @@ class StreamPipeline:
                 if prev_crop is not None:
                     pcx1, pcy1, pcx2, pcy2 = prev_crop
                     
-                    if track_result and is_tracking:
+                    if track_result and is_tracking and ball_detection:
                         alpha_x = 0.14
                         alpha_y = 0.12
                     else:
-                        alpha_x = 0.10
-                        alpha_y = 0.05
+                        alpha_x = 0.08
+                        alpha_y = 0.02
                     
                     x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
                     y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)

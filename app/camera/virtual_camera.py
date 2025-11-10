@@ -310,7 +310,7 @@ class VirtualCamera:
         x2 = int(center_x + half_w)
         y2 = int(center_y + half_h)
         
-        margin = 10
+        margin = 30
         if x1 < margin:
             x1 = margin
             x2 = margin + self.effective_width
