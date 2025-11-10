@@ -54,3 +54,7 @@ notebooks/.ipynb_checkpoints/
 notebooks/how_to_finetune_rf_detr_on_detection_dataset (2).ipynb
 docs/TENSORRT_MIGRATION.md
 
+SOLUTION_TRACKER_RECOVERY.md
+QUICKSTART.md
+CHANGES_SUMMARY.md
+README_TRACKER_FIX.md
