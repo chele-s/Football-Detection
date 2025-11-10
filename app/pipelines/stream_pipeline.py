@@ -536,13 +536,16 @@ class StreamPipeline:
                         lost_search_center = (cx, cy)
                     
                     search_target_x = int(reader.width * 0.50)
-                    search_target_y = int(reader.height * 0.48)
+                    search_target_y = int(reader.height * 0.42)
                     
-                    expansion_alpha = min(0.08 + (lost_count * 0.003), 0.20)
+                    expansion_alpha = min(0.05 + (lost_count * 0.002), 0.12)
                     new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + search_target_x * expansion_alpha)
                     new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + search_target_y * expansion_alpha)
-                    lost_search_center = (new_cx, new_cy)
                     
+                    safe_margin_y = int(self.virtual_camera.effective_height * 0.6)
+                    new_cy = max(safe_margin_y, min(new_cy, reader.height - safe_margin_y))
+                    
+                    lost_search_center = (new_cx, new_cy)
                     crop_coords = self.virtual_camera.update(new_cx, new_cy, time.time(), velocity_hint=(0, 0))
                 zoom.set_target(target_zoom_level)
                 current_zoom_level = zoom.update()
@@ -618,7 +621,7 @@ class StreamPipeline:
                         alpha_y = 0.12
                     else:
                         alpha_x = 0.10
-                        alpha_y = 0.08
+                        alpha_y = 0.05
                     
                     x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
                     y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
@@ -633,6 +636,21 @@ class StreamPipeline:
                     if abs(y1 - pcy1) > step_lim:
                         y1 = pcy1 + step_lim if y1 > pcy1 else pcy1 - step_lim
                         y2 = y1 + (pcy2 - pcy1)
+                
+                strict_margin = 5
+                if x1 < strict_margin: 
+                    x1 = strict_margin
+                    x2 = x1 + (prev_crop[2] - prev_crop[0] if prev_crop else self.virtual_camera.effective_width)
+                if y1 < strict_margin: 
+                    y1 = strict_margin
+                    y2 = y1 + (prev_crop[3] - prev_crop[1] if prev_crop else self.virtual_camera.effective_height)
+                if x2 > reader.width - strict_margin: 
+                    x2 = reader.width - strict_margin
+                    x1 = x2 - (prev_crop[2] - prev_crop[0] if prev_crop else self.virtual_camera.effective_width)
+                if y2 > reader.height - strict_margin: 
+                    y2 = reader.height - strict_margin
+                    y1 = y2 - (prev_crop[3] - prev_crop[1] if prev_crop else self.virtual_camera.effective_height)
+                
                 if x1 < 0: x1 = 0
                 if y1 < 0: y1 = 0
                 if x2 > reader.width: x2 = reader.width

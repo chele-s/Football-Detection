@@ -350,8 +350,8 @@ class VirtualCamera:
             self.last_target = np.array([safe_search_position[0], safe_search_position[1]])
         else:
             self.current_center_x = int(self.frame_width * 0.5)
-            self.current_center_y = int(self.frame_height * 0.48)
-            self.last_target = np.array([self.frame_width * 0.5, self.frame_height * 0.48])
+            self.current_center_y = int(self.frame_height * 0.40)
+            self.last_target = np.array([self.frame_width * 0.5, self.frame_height * 0.40])
         self.velocity = np.array([0.0, 0.0])
         self.acceleration = np.array([0.0, 0.0])
         self.position_filter.reset()
