@@ -75,7 +75,7 @@ def main():
     model_path = config['model']['path']
     
     if model_path and model_path.endswith('.onnx'):
-        from app.Inference.detector_onnx import BallDetectorONNX
+        from app.inference.detector_onnx import BallDetectorONNX
         print("    Using ONNX Runtime backend")
         detector = BallDetectorONNX(
             onnx_path=model_path,
@@ -83,7 +83,7 @@ def main():
             imgsz=config['model'].get('imgsz', 640)
         )
     elif model_path and model_path.endswith('.engine'):
-        from app.Inference.detector_tensorrt import BallDetectorTensorRT
+        from app.inference.detector_tensorrt import BallDetectorTensorRT
         print("    Using TensorRT backend")
         detector = BallDetectorTensorRT(
             engine_path=model_path,
