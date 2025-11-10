@@ -93,6 +93,21 @@ class BallDetector:
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
         logger.info("Model optimization complete")
+        
+        # Apply torch.compile if PyTorch 2.0+ (additional 30% speedup)
+        if hasattr(torch, '__version__') and torch.__version__ >= "2.0":
+            if hasattr(self.model, 'model'):
+                try:
+                    logger.info("Applying torch.compile() for additional speedup...")
+                    self.model.model = torch.compile(
+                        self.model.model,
+                        mode="reduce-overhead",  # Optimized for repeated small inputs
+                        fullgraph=False  # Allow fallback for dynamic parts
+                    )
+                    logger.info("✓ torch.compile() applied successfully")
+                except Exception as e:
+                    logger.warning(f"Could not apply torch.compile(): {e}")
+        
         logger.info(f"✓ RF-DETR ready on device: {self.device}")
         logger.info("Note: RF-DETR handles GPU internally, half_precision managed by optimize_for_inference()")
         
