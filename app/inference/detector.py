@@ -97,20 +97,41 @@ class BallDetector:
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
         logger.info("Model optimization complete - ready for inference")
-        logger.info("Note: torch.compile skipped - RF-DETR uses its own optimization")
         
-        # RF-DETR handles device internally, verify it's using GPU
-        logger.info(f"RF-DETR configured for device: {self.device}")
-        logger.info(f"FP16 enabled: {self.half_precision}")
-        logger.info("Note: RF-DETR manages GPU/FP16 internally via optimize_for_inference()")
+        # CRITICAL: Manually move internal model to GPU
+        # RF-DETR wraps a PyTorch model, we need to access it directly
+        logger.info(f"Manually moving model to {self.device}...")
         
-        # Verify model is actually on GPU by checking internal model
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'device'):
-            actual_device = self.model.model.device
-            logger.info(f"Internal model device: {actual_device}")
-        elif hasattr(self.model, 'device'):
-            actual_device = self.model.device
-            logger.info(f"Model device: {actual_device}")
+        if hasattr(self.model, 'model'):
+            # Access internal PyTorch model
+            logger.info("Found internal .model attribute - moving to GPU")
+            self.model.model = self.model.model.to(self.device)
+            
+            if self.half_precision and self.device == 'cuda':
+                logger.info("Converting internal model to FP16")
+                self.model.model = self.model.model.half()
+                logger.info("Model converted to FP16 successfully")
+            
+            # Verify
+            model_device = next(self.model.model.parameters()).device
+            model_dtype = next(self.model.model.parameters()).dtype
+            logger.info(f"✓ Internal model on: {model_device}, dtype: {model_dtype}")
+        else:
+            logger.warning("Could not find internal .model attribute - trying direct access")
+            # Fallback: try to access parameters directly
+            try:
+                params = list(self.model.parameters())
+                if params:
+                    logger.info(f"Found {len(params)} parameters - current device: {params[0].device}")
+                    # Try to move all parameters
+                    for param in self.model.parameters():
+                        param.data = param.data.to(self.device)
+                        if self.half_precision and self.device == 'cuda':
+                            param.data = param.data.half()
+                    logger.info("Parameters moved to GPU manually")
+            except Exception as e:
+                logger.error(f"Failed to move model to GPU: {e}")
+                logger.error("Model will run on CPU - performance will be degraded")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
@@ -169,16 +190,6 @@ class BallDetector:
             image = frame
         
         with torch.no_grad():
-            # Verify model is on GPU (first inference only)
-            if self.stats['total_inferences'] == 1 and torch.cuda.is_available():
-                if hasattr(self.model, 'model'):
-                    try:
-                        model_device = next(self.model.model.parameters()).device
-                        model_dtype = next(self.model.model.parameters()).dtype
-                        logger.info(f"[VERIFICATION] Internal model on: {model_device}, dtype: {model_dtype}")
-                    except:
-                        logger.warning("Could not verify internal model device")
-            
             if self.multi_scale:
                 detections_sv = self._multi_scale_inference(image)
             else:
