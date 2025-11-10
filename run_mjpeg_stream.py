@@ -346,6 +346,11 @@ def main():
             elif track_result:
                 x, y, is_tracking = track_result
                 
+                # Check if we have real detection (not prediction)
+                det_ok = False
+                if ball_detection:
+                    det_ok = True
+                
                 # Detect tracking/lost loops
                 if is_tracking != last_tracking_state:
                     tracking_state_changes.append(frame_count)
@@ -399,12 +404,10 @@ def main():
                 if anchor is None:
                     anchor = (x, y)
                 use_x, use_y = x, y
-                # Update last_det for visual overlay and det_ok flag
-                det_ok = False
+                # Update last_det for visual overlay
                 if ball_detection:
                     bx, by, bw, bh, bconf = ball_detection
                     last_det = (bx, by)
-                    det_ok = True
 
                 if is_tracking and kalman_ok and cooldown == 0:
                     d = math.hypot(x - last_stable[0], y - last_stable[1])
