@@ -29,13 +29,14 @@ def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480
     )
     
     model.optimize_for_inference()
-    model.eval()
     
     # Access internal PyTorch model
     if not hasattr(model, 'model'):
         raise AttributeError("Cannot access internal model for export")
     
-    pytorch_model = model.model.cuda()
+    pytorch_model = model.model
+    pytorch_model.eval()
+    pytorch_model = pytorch_model.cuda()
     
     print(f"[1/3] Creating dummy input: {resolution}x{resolution}")
     dummy_input = torch.randn(1, 3, resolution, resolution).cuda()
