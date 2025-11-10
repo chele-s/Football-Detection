@@ -84,17 +84,79 @@ class BallDetectorONNX:
             'empty_frames': 0
         }
     
+    def _resize_keeping_aspect_ratio(self, image: np.ndarray, desired_size: Tuple[int, int]) -> np.ndarray:
+        """
+        Resize image preserving aspect ratio.
+        
+        Args:
+            image: numpy array representing the image
+            desired_size: tuple (width, height) representing target dimensions
+        
+        Returns:
+            Resized image
+        """
+        img_ratio = image.shape[1] / image.shape[0]  # width / height
+        desired_ratio = desired_size[0] / desired_size[1]
+        
+        # Determine new dimensions
+        if img_ratio >= desired_ratio:
+            # Resize by width
+            new_width = desired_size[0]
+            new_height = int(desired_size[0] / img_ratio)
+        else:
+            # Resize by height
+            new_height = desired_size[1]
+            new_width = int(desired_size[1] * img_ratio)
+        
+        return cv2.resize(image, (new_width, new_height))
+    
+    def _letterbox(self, image: np.ndarray, desired_size: Tuple[int, int], color: Tuple[int, int, int] = (114, 114, 114)) -> np.ndarray:
+        """
+        Resize and pad image to fit desired size, preserving aspect ratio.
+        Uses letterbox method (adds borders) instead of stretching.
+        
+        Args:
+            image: numpy array representing the image
+            desired_size: tuple (width, height) representing target dimensions
+            color: tuple (B, G, R) representing the color to pad with
+        
+        Returns:
+            Letterboxed image
+        """
+        # Resize keeping aspect ratio
+        resized_img = self._resize_keeping_aspect_ratio(image, desired_size)
+        new_height, new_width = resized_img.shape[:2]
+        
+        # Calculate padding
+        top_padding = (desired_size[1] - new_height) // 2
+        bottom_padding = desired_size[1] - new_height - top_padding
+        left_padding = (desired_size[0] - new_width) // 2
+        right_padding = desired_size[0] - new_width - left_padding
+        
+        # Store padding info for postprocessing
+        self._pad_x = left_padding
+        self._pad_y = top_padding
+        self._scale = min(desired_size[0] / image.shape[1], desired_size[1] / image.shape[0])
+        
+        # Add border padding
+        return cv2.copyMakeBorder(
+            resized_img,
+            top_padding,
+            bottom_padding,
+            left_padding,
+            right_padding,
+            cv2.BORDER_CONSTANT,
+            value=color
+        )
+    
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:
-        """Preprocess frame for ONNX model following RF-DETR official preprocessing"""
-        # Store original dimensions for later
         self._original_h, self._original_w = frame.shape[:2]
         
-        # Resize to model input size (stretch to square)
-        if frame.shape[0] != self.imgsz or frame.shape[1] != self.imgsz:
-            frame = cv2.resize(frame, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+        # Apply letterbox (resize keeping aspect ratio + padding)
+        frame_letterboxed = self._letterbox(frame, (self.imgsz, self.imgsz), color=(114, 114, 114))
         
         # BGR to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_rgb = cv2.cvtColor(frame_letterboxed, cv2.COLOR_BGR2RGB)
         
         # Normalize to [0, 1]
         frame_normalized = frame_rgb.astype(np.float32) / 255.0
@@ -110,7 +172,10 @@ class BallDetectorONNX:
         return np.expand_dims(frame_chw, axis=0).astype(np.float32)
     
     def _postprocess(self, outputs: List[np.ndarray], original_shape: Tuple[int, int]) -> List[Tuple]:
-        """Post-process model outputs following RF-DETR official post-processing"""
+        """
+        Post-process model outputs following RF-DETR official post-processing.
+        Handles letterbox padding to return coordinates in original image space.
+        """
         if len(outputs) < 2:
             logger.warning("ONNX output has less than 2 tensors")
             return []
@@ -154,16 +219,44 @@ class BallDetectorONNX:
             logger.debug(f"Detection {i}: box_raw={box}, score={score:.4f}, class={class_id}")
             
             # RF-DETR outputs boxes in cxcywh format normalized to [0, 1]
-            # Convert to pixel coordinates in original image
+            # Convert to xyxy format first
             cx_norm, cy_norm, w_norm, h_norm = box[0], box[1], box[2], box[3]
+            x1_norm = cx_norm - 0.5 * w_norm
+            y1_norm = cy_norm - 0.5 * h_norm
+            x2_norm = cx_norm + 0.5 * w_norm
+            y2_norm = cy_norm + 0.5 * h_norm
             
-            # Scale to original image dimensions
-            x_center = cx_norm * orig_w
-            y_center = cy_norm * orig_h
-            width = w_norm * orig_w
-            height = h_norm * orig_h
+            # Scale to input image size (with letterbox padding)
+            x1_input = x1_norm * self.imgsz
+            y1_input = y1_norm * self.imgsz
+            x2_input = x2_norm * self.imgsz
+            y2_input = y2_norm * self.imgsz
             
-            logger.debug(f"  → Scaled: cx={x_center:.1f}, cy={y_center:.1f}, w={width:.1f}, h={height:.1f}")
+            # Remove letterbox padding
+            x1_input -= self._pad_x
+            y1_input -= self._pad_y
+            x2_input -= self._pad_x
+            y2_input -= self._pad_y
+            
+            # Scale back to original image size
+            x1_orig = x1_input / self._scale
+            y1_orig = y1_input / self._scale
+            x2_orig = x2_input / self._scale
+            y2_orig = y2_input / self._scale
+            
+            # Clip to image bounds
+            x1_orig = np.clip(x1_orig, 0, orig_w)
+            y1_orig = np.clip(y1_orig, 0, orig_h)
+            x2_orig = np.clip(x2_orig, 0, orig_w)
+            y2_orig = np.clip(y2_orig, 0, orig_h)
+            
+            # Convert back to cxcywh format for compatibility
+            x_center = (x1_orig + x2_orig) / 2
+            y_center = (y1_orig + y2_orig) / 2
+            width = x2_orig - x1_orig
+            height = y2_orig - y1_orig
+            
+            logger.debug(f"  → Final: cx={x_center:.1f}, cy={y_center:.1f}, w={width:.1f}, h={height:.1f}")
             
             if width > 0 and height > 0:
                 detections.append((x_center, y_center, width, height, float(score), int(class_id)))
