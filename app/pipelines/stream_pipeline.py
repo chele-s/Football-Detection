@@ -177,7 +177,8 @@ class StreamPipeline:
         max_zoom_level = 1.8
         frames_tracking = 0
         frames_required_for_zoom = 4
-        lost_search_center = None  # Gradual expansion center when lost
+        lost_search_center = None
+        last_valid_y_tracking = None
         zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level)
         diag = int(math.hypot(reader.width, reader.height))
         stable_step_px = max(6, int(diag * 0.030))
@@ -478,9 +479,10 @@ class StreamPipeline:
                     safe_use_x = max(crop_half_w + 20, min(safe_use_x, reader.width - crop_half_w - 20))
                     safe_use_y = max(crop_half_h + 20, min(safe_use_y, reader.height - crop_half_h - 20))
                     
-                    if not is_tracking and not ball_detection:
-                        prev_safe_y = self.virtual_camera.current_center_y
-                        safe_use_y = prev_safe_y
+                    if is_tracking and ball_detection:
+                        last_valid_y_tracking = safe_use_y
+                    elif not is_tracking and last_valid_y_tracking is not None:
+                        safe_use_y = min(safe_use_y, last_valid_y_tracking)
                     
                     crop_coords = self.virtual_camera.update(safe_use_x, safe_use_y, time.time(), velocity_hint=(vhx, vhy))
                     detection_count += 1
@@ -633,12 +635,18 @@ class StreamPipeline:
                         alpha_y = 0.12
                     else:
                         alpha_x = 0.08
-                        alpha_y = 0.02
+                        alpha_y = 0.0
                     
                     x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
-                    y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
+                    if alpha_y > 0:
+                        y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
+                    else:
+                        y1 = pcy1
                     x2 = int(pcx2 * (1.0 - alpha_x) + x2 * alpha_x)
-                    y2 = int(pcy2 * (1.0 - alpha_y) + y2 * alpha_y)
+                    if alpha_y > 0:
+                        y2 = int(pcy2 * (1.0 - alpha_y) + y2 * alpha_y)
+                    else:
+                        y2 = pcy2
                     
                     step_lim = int(max_crop_step_base * (1.5 + max(0.0, current_zoom_level - 1.0) * 1.2))
                     
