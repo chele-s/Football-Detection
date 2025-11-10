@@ -197,7 +197,7 @@ class BallTracker:
                     if self.is_tracking:
                         allowed_distance = max(120.0, min(900.0, 3.5 * vmag + 220.0))
                     else:
-                        allowed_distance = 1200.0
+                        allowed_distance = 2500.0
                     dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
                     if dist_curr > allowed_distance:
                         self.stats['outliers_rejected'] += 1
@@ -220,7 +220,7 @@ class BallTracker:
                         S += np.eye(2) * 1e-4
                         S_inv = np.linalg.inv(S)
                     maha = float(y.T @ S_inv @ y)
-                    gate_thr = 14.0 if not self.is_tracking else 11.83
+                    gate_thr = 25.0 if not self.is_tracking else 11.83
                     if maha > gate_thr:
                         self.stats['outliers_rejected'] += 1
                         detection = None

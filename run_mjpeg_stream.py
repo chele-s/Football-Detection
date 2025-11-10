@@ -266,6 +266,22 @@ def main():
                         roi_active = False
                         roi_fail_count = 0
             
+            # Spatial filter: exclude upper region (stands/lights)
+            if ball_detection is not None:
+                bx, by, bw, bh, bconf = ball_detection
+                # Reject detections in upper 35% of frame (stands/lights area)
+                if by < reader.height * 0.35:
+                    ball_detection = None
+            
+            # Filter all_detections as well
+            if all_detections:
+                filtered_dets = []
+                for d in all_detections:
+                    dx, dy = d[0], d[1]
+                    if dy >= reader.height * 0.35:
+                        filtered_dets.append(d)
+                all_detections = filtered_dets if filtered_dets else None
+            
             track_result = tracker.update(ball_detection, all_detections)
             
             if not camera_initialized and track_result:
