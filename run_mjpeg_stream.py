@@ -151,6 +151,7 @@ def main():
     max_zoom_level = 1.8
     frames_tracking = 0
     frames_required_for_zoom = 4
+    lost_search_center = None  # Gradual expansion center when lost
 
     zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.060, damping=0.60, max_rate=0.11, max_rate_in=0.14, max_rate_out=0.10, accel_limit=0.05)
     diag = int(math.hypot(reader.width, reader.height))
@@ -422,6 +423,10 @@ def main():
                     center_lp = (cx, cy)
                     use_x, use_y = center_lp
 
+                # Reset lost search center when we have tracking again
+                if is_tracking:
+                    lost_search_center = None
+                    
                 # CRITICAL: Only update camera when we have REAL detection, not predictions
                 # This prevents jitter from Kalman predictions
                 if is_tracking and det_ok:
@@ -526,14 +531,34 @@ def main():
                     else:
                         target_zoom_level = 1.0
             else:
-                # No tracking - keep current position and zoom out
-                crop_coords = virtual_camera.get_current_crop()
+                # No tracking - gradually expand search area from last known position
                 lost_count += 1
                 frames_tracking = 0
                 target_zoom_level = 1.0
                 zoom_lock_count = 0
                 hold_zoom_level = 1.0
                 roi_active = False
+                
+                # Gradual expansion: move crop towards frame center over time
+                if lost_search_center is None:
+                    # Start from last known position
+                    current_crop = virtual_camera.get_current_crop()
+                    cx = (current_crop[0] + current_crop[2]) // 2
+                    cy = (current_crop[1] + current_crop[3]) // 2
+                    lost_search_center = (cx, cy)
+                
+                # Gradually move towards frame center for wider search
+                frame_center_x = reader.width // 2
+                frame_center_y = reader.height // 2
+                
+                # Expansion speed based on how long we've been lost
+                expansion_alpha = min(0.15 + (lost_count * 0.005), 0.35)
+                new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + frame_center_x * expansion_alpha)
+                new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + frame_center_y * expansion_alpha)
+                lost_search_center = (new_cx, new_cy)
+                
+                # Update camera to expanded search position
+                crop_coords = virtual_camera.update(new_cx, new_cy, time.time(), velocity_hint=(0, 0))
             
             dz = target_zoom_level - zoom_target_lp
             az_t = 0.28 if abs(dz) > 0.25 else 0.18
