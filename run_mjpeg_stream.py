@@ -293,31 +293,36 @@ def main():
                         roi_last_valid_pos = None
             
             # Spatial filter: exclude stands/lights regions (top + sides)
-            # TOP: Reject detections in upper 25% of frame (stands/lights)
-            # SIDES: Reject detections in outer 15% on left and right (side stands)
-            if ball_detection is not None:
-                bx, by, bw, bh, bconf = ball_detection
-                # Exclude top region
-                if by < reader.height * 0.25:
-                    ball_detection = None
-                # Exclude left side region
-                elif bx < reader.width * 0.15:
-                    ball_detection = None
-                # Exclude right side region
-                elif bx > reader.width * 0.85:
-                    ball_detection = None
+            # ONLY apply when ROI is NOT active AND zoom < 1.4
+            # When zoomed in or ROI active, we're already focused on playing field
+            apply_spatial_filter = (not roi_active) and (current_zoom_level < 1.4)
             
-            # Filter all_detections as well
-            if all_detections:
-                filtered_dets = []
-                for d in all_detections:
-                    dx, dy = d[0], d[1]
-                    # Keep only detections in valid playing field area
-                    if (dy >= reader.height * 0.25 and 
-                        dx >= reader.width * 0.15 and 
-                        dx <= reader.width * 0.85):
-                        filtered_dets.append(d)
-                all_detections = filtered_dets if filtered_dets else None
+            if apply_spatial_filter:
+                # TOP: Reject detections in upper 25% of frame (stands/lights)
+                # SIDES: Reject detections in outer 15% on left and right (side stands)
+                if ball_detection is not None:
+                    bx, by, bw, bh, bconf = ball_detection
+                    # Exclude top region
+                    if by < reader.height * 0.25:
+                        ball_detection = None
+                    # Exclude left side region
+                    elif bx < reader.width * 0.15:
+                        ball_detection = None
+                    # Exclude right side region
+                    elif bx > reader.width * 0.85:
+                        ball_detection = None
+                
+                # Filter all_detections as well
+                if all_detections:
+                    filtered_dets = []
+                    for d in all_detections:
+                        dx, dy = d[0], d[1]
+                        # Keep only detections in valid playing field area
+                        if (dy >= reader.height * 0.25 and 
+                            dx >= reader.width * 0.15 and 
+                            dx <= reader.width * 0.85):
+                            filtered_dets.append(d)
+                    all_detections = filtered_dets if filtered_dets else None
             
             track_result = tracker.update(ball_detection, all_detections)
             
