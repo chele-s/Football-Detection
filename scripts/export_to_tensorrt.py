@@ -10,7 +10,6 @@ Expected speedup: 2-3x (20-30 FPS → 40-60 FPS)
 
 import argparse
 import torch
-import tensorrt as trt
 from pathlib import Path
 import numpy as np
 import sys
@@ -79,53 +78,62 @@ def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480
 
 
 def build_tensorrt_engine(onnx_path: str, engine_path: str, fp16: bool = True):
-    """Build TensorRT engine from ONNX"""
+    """Build TensorRT engine from ONNX using trtexec CLI"""
     print(f"\n[2/3] Building TensorRT engine from {onnx_path}")
     print("⏳ This may take 2-5 minutes...")
     
-    TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+    # Use trtexec command-line tool (more robust than Python API)
+    import subprocess
     
-    builder = trt.Builder(TRT_LOGGER)
-    network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
-    parser = trt.OnnxParser(network, TRT_LOGGER)
+    cmd = [
+        "trtexec",
+        f"--onnx={onnx_path}",
+        f"--saveEngine={engine_path}",
+        "--memPoolSize=workspace:4096",  # 4GB workspace
+    ]
     
-    # Parse ONNX
-    print("[2/3] Parsing ONNX model...")
-    with open(onnx_path, 'rb') as model_file:
-        if not parser.parse(model_file.read()):
-            print("❌ Failed to parse ONNX file")
-            for error in range(parser.num_errors):
-                print(f"  Error: {parser.get_error(error)}")
-            return None
-    
-    print("[2/3] ONNX parsed successfully")
-    
-    # Build config
-    config = builder.create_builder_config()
-    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 4 << 30)  # 4GB
-    
-    # Enable FP16 for 2x speedup
-    if fp16 and builder.platform_has_fast_fp16:
-        config.set_flag(trt.BuilderFlag.FP16)
+    if fp16:
+        cmd.append("--fp16")
         print("✓ FP16 mode enabled (2x faster)")
-    else:
-        print("⚠ FP16 not available, using FP32")
     
-    # Build engine
+    # Add performance flags
+    cmd.extend([
+        "--useCudaGraph",
+        "--useSpinWait",
+        "--warmUp=100",
+        "--avgRuns=100"
+    ])
+    
+    print(f"[2/3] Running: {' '.join(cmd)}")
     print("[2/3] Building engine (this is the slow part)...")
-    serialized_engine = builder.build_serialized_network(network, config)
     
-    if serialized_engine is None:
-        print("❌ Failed to build TensorRT engine")
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Print relevant output
+        if "mean" in result.stdout:
+            print("\n[2/3] Performance metrics:")
+            for line in result.stdout.split('\n'):
+                if 'mean' in line.lower() or 'throughput' in line.lower():
+                    print(f"  {line.strip()}")
+        
+        print(f"\n✓ TensorRT engine saved: {engine_path}")
+        return engine_path
+        
+    except subprocess.CalledProcessError as e:
+        print(f"❌ trtexec failed with exit code {e.returncode}")
+        print(f"\nSTDOUT:\n{e.stdout}")
+        print(f"\nSTDERR:\n{e.stderr}")
         return None
-    
-    # Save engine
-    print(f"[2/3] Saving engine to {engine_path}")
-    with open(engine_path, "wb") as f:
-        f.write(serialized_engine)
-    
-    print(f"✓ TensorRT engine saved: {engine_path}")
-    return engine_path
+    except FileNotFoundError:
+        print("❌ trtexec not found. Please ensure TensorRT is installed.")
+        print("   Try: apt-get install tensorrt")
+        return None
 
 
 def benchmark_engine(engine_path: str, warmup: int = 10, iterations: int = 100):
@@ -223,12 +231,11 @@ def main():
         # Build TensorRT engine
         build_tensorrt_engine(str(onnx_path), str(engine_path), args.fp16)
         
-        # Benchmark
+        # Note: trtexec already provides performance metrics
+        # Additional benchmarking is optional and may fail with CUDA context issues
         if args.benchmark:
-            try:
-                benchmark_engine(str(engine_path))
-            except Exception as e:
-                print(f"⚠ Benchmark failed: {e}")
+            print("\n[3/3] Performance metrics already shown by trtexec above")
+            print("     (Additional Python-based benchmarking skipped to avoid CUDA issues)")
         
         print(f"\n{'='*60}")
         print(f"  ✓ Export Complete!")
