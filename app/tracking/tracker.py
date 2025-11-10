@@ -137,6 +137,7 @@ class BallTracker:
         self.confidence_history = deque(maxlen=history_size)
         self.velocity_history = deque(maxlen=history_size)
         self.mahalanobis_history = deque(maxlen=20)
+        self.movement_history = deque(maxlen=15)
         
         self.last_detection = None
         self.predicted_position = None
@@ -150,8 +151,12 @@ class BallTracker:
             'successful_tracks': 0,
             'predictions_used': 0,
             'noise_adaptations': 0,
-            'outliers_rejected': 0
+            'outliers_rejected': 0,
+            'erratic_detections': 0
         }
+        
+        self.stability_lock = 0
+        self.stability_lock_max = 20
         
         logger.info(f"BallTracker initialized: max_lost={max_lost_frames}, min_conf={min_confidence}")
     
@@ -166,10 +171,26 @@ class BallTracker:
         is_stable = tracking_strength > 0.5
         is_recovering = self.lost_frames > 0 and self.lost_frames <= 5
         
+        detector_erratic = self._is_detector_erratic()
+        movement_variance = self._calculate_movement_variance()
+        is_very_stable = self.consecutive_detections >= 25 and movement_variance < 15.0
+        
+        if self.stability_lock > 0:
+            self.stability_lock -= 1
+        
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             
-            if confidence < self.min_confidence:
+            if self.stability_lock > 0 and self.kalman.initialized:
+                pred_x, pred_y = float(self.kalman.x[0, 0]), float(self.kalman.x[1, 0])
+                dist_to_pred = float(np.sqrt((x_center - pred_x)**2 + (y_center - pred_y)**2))
+                lock_threshold = 80.0
+                
+                if dist_to_pred > lock_threshold:
+                    logger.debug(f"Stability lock active: ignoring detection {dist_to_pred:.1f}px away")
+                    detection = None
+            
+            if detection is not None and confidence < self.min_confidence:
                 if is_stable:
                     logger.debug(f"Low confidence {confidence:.2f}, but tracker stable - accepting")
                 else:
@@ -196,6 +217,11 @@ class BallTracker:
             
             should_gate = is_stable and not is_recovering
             
+            if detector_erratic and is_stable:
+                self.stats['erratic_detections'] += 1
+                logger.debug(f"Detector erratic (variance={movement_variance:.1f}), stricter gating")
+                should_gate = True
+            
             if should_gate and self.last_bbox is not None:
                 vx_est, vy_est = self.get_velocity()
                 vmag = float(np.sqrt(vx_est**2 + vy_est**2))
@@ -203,7 +229,8 @@ class BallTracker:
                 base_distance = 180.0
                 velocity_factor = min(vmag * 2.5, 800.0)
                 lost_relaxation = min(self.lost_frames * 150.0, 600.0)
-                allowed_distance = base_distance + velocity_factor + lost_relaxation
+                erratic_penalty = 80.0 if detector_erratic else 0.0
+                allowed_distance = base_distance + velocity_factor + lost_relaxation - erratic_penalty
                 
                 dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
                 
@@ -234,7 +261,8 @@ class BallTracker:
                     base_threshold = 15.0
                     lost_bonus = min(self.lost_frames * 8.0, 40.0)
                     confidence_bonus = max(0, (confidence - 0.6) * 25.0)
-                    gate_threshold = base_threshold + lost_bonus + confidence_bonus
+                    erratic_penalty = 8.0 if detector_erratic else 0.0
+                    gate_threshold = base_threshold + lost_bonus + confidence_bonus - erratic_penalty
                     
                     if maha > gate_threshold:
                         if confidence > 0.75:
@@ -245,6 +273,11 @@ class BallTracker:
                             detection = None
                 
             if detection is not None:
+                if len(self.position_history) > 0:
+                    last_pos = self.position_history[-1]
+                    movement = np.sqrt((x_center - last_pos[0])**2 + (y_center - last_pos[1])**2)
+                    self.movement_history.append(float(movement))
+                
                 mahalanobis = self.kalman.correct(x_center, y_center)
                 self.mahalanobis_history.append(mahalanobis)
                 
@@ -252,8 +285,13 @@ class BallTracker:
                 self.consecutive_detections += 1
                 
                 current_strength = min(self.consecutive_detections / 15.0, 1.0)
-                target_noise = 3.0 + (7.0 * (1.0 - current_strength))
+                base_noise = 3.0 + (7.0 * (1.0 - current_strength))
+                erratic_noise_boost = 4.0 if detector_erratic else 0.0
+                target_noise = base_noise + erratic_noise_boost
                 self.kalman.set_measurement_noise(target_noise)
+                
+                if is_very_stable and movement < 5.0:
+                    self.stability_lock = self.stability_lock_max
                 
                 if self.adaptive_noise and len(self.position_history) >= 5:
                     recent_positions = list(self.position_history)[-5:]
@@ -285,6 +323,7 @@ class BallTracker:
                                 f"tracks={self.stats['successful_tracks']}, "
                                 f"predictions={self.stats['predictions_used']}, "
                                 f"outliers={self.stats['outliers_rejected']}, "
+                                f"erratic={self.stats['erratic_detections']}, "
                                 f"strength={current_strength:.2f}")
                 
                 return (x_center, y_center, True)
@@ -366,6 +405,31 @@ class BallTracker:
         
         return z_score_x > 3.0 or z_score_y > 3.0
     
+    def _is_detector_erratic(self) -> bool:
+        if len(self.movement_history) < 8:
+            return False
+        
+        recent_movements = list(self.movement_history)[-8:]
+        variance = np.var(recent_movements)
+        mean_movement = np.mean(recent_movements)
+        
+        if variance > 800.0:
+            return True
+        
+        if mean_movement > 80.0 and variance > 400.0:
+            return True
+        
+        consecutive_large_jumps = sum(1 for m in recent_movements[-5:] if m > 100.0)
+        if consecutive_large_jumps >= 3:
+            return True
+        
+        return False
+    
+    def _calculate_movement_variance(self) -> float:
+        if len(self.movement_history) < 3:
+            return 0.0
+        return float(np.var(list(self.movement_history)[-10:]))
+    
     def _find_best_match(self, pred_x: float, pred_y: float, 
                          detections: List[Tuple[float, float, float, float, float]], 
                          search_radius: float = 300.0) -> Optional[Tuple]:
@@ -443,17 +507,20 @@ class BallTracker:
         self.confidence_history.clear()
         self.velocity_history.clear()
         self.mahalanobis_history.clear()
+        self.movement_history.clear()
         self.last_detection = None
         self.predicted_position = None
         self.last_bbox = None
         self.hypotheses.clear()
         self.hypothesis_scores.clear()
+        self.stability_lock = 0
         self.stats = {
             'total_updates': 0,
             'successful_tracks': 0,
             'predictions_used': 0,
             'noise_adaptations': 0,
-            'outliers_rejected': 0
+            'outliers_rejected': 0,
+            'erratic_detections': 0
         }
     
     def get_state(self) -> Dict:

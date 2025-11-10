@@ -201,6 +201,10 @@ class VirtualCamera:
             'zoom_adjustments': 0
         }
         
+        self.stability_mode_active = False
+        self.stability_mode_cooldown = 0
+        self.base_min_cutoff = smoothing_min_cutoff
+        
         logger.info(f"VirtualCamera initialized: {frame_width}x{frame_height} -> {output_width}x{output_height}")
     
     def update(
@@ -208,10 +212,24 @@ class VirtualCamera:
         target_x: float,
         target_y: float,
         timestamp: Optional[float] = None,
-        velocity_hint: Optional[Tuple[float, float]] = None
+        velocity_hint: Optional[Tuple[float, float]] = None,
+        detector_stable: bool = True
     ) -> Tuple[int, int, int, int]:
         self.stats['total_updates'] += 1
         self.frame_count += 1
+        
+        if not detector_stable and not self.stability_mode_active:
+            self.stability_mode_active = True
+            self.stability_mode_cooldown = 45
+            self.position_filter.set_smoothing_level(0.35)
+            logger.debug("Detector unstable - activating stability mode")
+        
+        if self.stability_mode_active:
+            self.stability_mode_cooldown -= 1
+            if self.stability_mode_cooldown <= 0:
+                self.stability_mode_active = False
+                self.position_filter.set_smoothing_level(self.base_min_cutoff)
+                logger.debug("Stability mode deactivated")
         
         current_target = np.array([target_x, target_y])
         current_velocity = current_target - self.last_target

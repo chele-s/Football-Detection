@@ -188,6 +188,10 @@ class OneEuroFilter:
     def get_stats(self) -> dict:
         return self.stats.copy()
     
+    def set_smoothing_level(self, level: float):
+        self.min_cutoff = np.clip(level, 0.1, 5.0)
+        logger.debug(f"Smoothing level adjusted to min_cutoff={self.min_cutoff:.2f}")
+    
     def reset(self):
         logger.info("Resetting One-Euro Filter")
         self.x_filter = AdaptiveLowPassFilter(self._alpha(self.min_cutoff), self.outlier_threshold)

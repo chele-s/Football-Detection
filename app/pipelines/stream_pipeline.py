@@ -274,7 +274,7 @@ class StreamPipeline:
                 if not camera_initialized and track_result:
                     x, y, is_tracking = track_result
                     self.virtual_camera.reset()
-                    crop_coords = self.virtual_camera.update(x, y, time.time(), velocity_hint=self.tracker.get_velocity())
+                    crop_coords = self.virtual_camera.update(x, y, time.time(), velocity_hint=self.tracker.get_velocity(), detector_stable=True)
                     camera_initialized = True
                 elif track_result:
                     x, y, is_tracking = track_result
@@ -289,6 +289,14 @@ class StreamPipeline:
                     
                     state = self.tracker.get_state()
                     vmag = state['velocity_magnitude'] if state else 0.0
+                    
+                    detector_stable = True
+                    if state and 'stats' in state:
+                        total = state['stats'].get('total_updates', 1)
+                        erratic = state['stats'].get('erratic_detections', 0)
+                        if total > 0:
+                            erratic_rate = erratic / total
+                            detector_stable = erratic_rate < 0.08
                     
                     use_x, use_y = x, y
                     
@@ -307,7 +315,7 @@ class StreamPipeline:
                         safe_y = max(min_allowed_y, prev_y)
                     
                     vhx, vhy = self.tracker.get_velocity()
-                    crop_coords = self.virtual_camera.update(safe_x, safe_y, time.time(), velocity_hint=(vhx, vhy))
+                    crop_coords = self.virtual_camera.update(safe_x, safe_y, time.time(), velocity_hint=(vhx, vhy), detector_stable=detector_stable)
                     
                     if is_tracking and frames_tracking >= 8:
                         if vmag > 900:
@@ -349,7 +357,7 @@ class StreamPipeline:
                         int(lost_search_center[1] * 0.96 + search_target_y * 0.04)
                     )
                     
-                    crop_coords = self.virtual_camera.update(lost_search_center[0], lost_search_center[1], time.time(), velocity_hint=(0, 0))
+                    crop_coords = self.virtual_camera.update(lost_search_center[0], lost_search_center[1], time.time(), velocity_hint=(0, 0), detector_stable=True)
                 zoom.set_target(target_zoom_level)
                 current_zoom_level = zoom.update()
                 
