@@ -157,15 +157,24 @@ class BallDetectorONNX:
         
         orig_h, orig_w = original_shape
         detections = []
-        for box, score, class_id in zip(boxes_filtered, scores_filtered, classes_filtered):
+        for i, (box, score, class_id) in enumerate(zip(boxes_filtered, scores_filtered, classes_filtered)):
+            logger.debug(f"Detection {i}: box_raw={box}, score={score:.4f}, class={class_id}")
+            
             x_center = box[0] * orig_w
             y_center = box[1] * orig_h
             width = box[2] * orig_w
             height = box[3] * orig_h
             
-            detections.append((x_center, y_center, width, height, float(score), int(class_id)))
+            logger.debug(f"  → Scaled: cx={x_center:.1f}, cy={y_center:.1f}, w={width:.1f}, h={height:.1f}")
+            
+            if width > 0 and height > 0:
+                detections.append((x_center, y_center, width, height, float(score), int(class_id)))
+            else:
+                logger.warning(f"  → SKIPPED: Invalid dimensions w={width} h={height}")
         
-        logger.debug(f"Final detections: {len(detections)}")
+        logger.info(f"✓ Returning {len(detections)} valid detections")
+        if detections:
+            logger.info(f"  Best detection: {detections[0]}")
         return detections
     
     def predict_ball_only(
