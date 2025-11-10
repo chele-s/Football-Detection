@@ -380,10 +380,6 @@ def main():
                 else:
                     consecutive_det_frames = 0
                 
-                # Skip normal tracking processing if in recovery cooldown
-                if lost_recovery_cooldown > 0:
-                    continue
-                
                 if not is_tracking:
                     # Freeze camera during search to avoid jitter from predictions
                     if roi_active:
