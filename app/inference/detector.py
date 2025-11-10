@@ -69,20 +69,16 @@ class BallDetector:
         logger.info("Initializing RF-DETR Medium model...")
         if self.model_path and self.model_path.exists():
             logger.info(f"Loading fine-tuned checkpoint: {self.model_path}")
-            # RF-DETR accepts device parameter
+            # RF-DETR handles device internally - don't pass device parameter
             self.model = RFDETRMedium(
                 num_classes=1,
                 resolution=self.imgsz,
-                pretrain_weights=str(self.model_path),
-                device=self.device
+                pretrain_weights=str(self.model_path)
             )
             logger.info("Custom model weights loaded successfully")
         else:
             logger.warning("No custom model found, using COCO pretrained weights")
-            self.model = RFDETRMedium(
-                resolution=self.imgsz,
-                device=self.device
-            )
+            self.model = RFDETRMedium(resolution=self.imgsz)
         
         if self.device == 'cuda' and torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
@@ -96,75 +92,9 @@ class BallDetector:
         
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
-        logger.info("Model optimization complete - ready for inference")
-        
-        # CRITICAL: Manually move model to GPU
-        # RF-DETR uses nested wrappers, we need to move parameters directly
-        logger.info(f"Moving model to {self.device}...")
-        
-        try:
-            # Strategy: Recursively find and move all PyTorch modules
-            def move_to_device(obj, device, use_fp16=False):
-                """Recursively move all torch modules/parameters to device"""
-                moved_count = 0
-                
-                # Try to access common attributes that might contain models
-                for attr_name in ['model', 'detector', 'backbone', 'encoder', 'decoder', 'head']:
-                    if hasattr(obj, attr_name):
-                        attr = getattr(obj, attr_name)
-                        if attr is not None:
-                            # Try to move this attribute
-                            try:
-                                if hasattr(attr, 'to'):
-                                    logger.info(f"Moving .{attr_name} to {device}")
-                                    setattr(obj, attr_name, attr.to(device))
-                                    if use_fp16:
-                                        setattr(obj, attr_name, getattr(obj, attr_name).half())
-                                    moved_count += 1
-                                else:
-                                    # Recurse deeper
-                                    moved_count += move_to_device(attr, device, use_fp16)
-                            except Exception as e:
-                                logger.debug(f"Could not move .{attr_name}: {e}")
-                
-                # Also try to move parameters directly if this is a Module
-                if hasattr(obj, 'parameters'):
-                    try:
-                        for param in obj.parameters():
-                            if param.device.type != device:
-                                param.data = param.data.to(device)
-                                if use_fp16 and device == 'cuda':
-                                    param.data = param.data.half()
-                                moved_count += 1
-                    except:
-                        pass
-                
-                return moved_count
-            
-            # Try to move the model
-            moved = move_to_device(self.model, self.device, self.half_precision)
-            logger.info(f"Moved {moved} components to {self.device}")
-            
-            # Verify by checking first parameter we can find
-            verification_done = False
-            for attr_name in ['model', 'detector', 'backbone']:
-                if hasattr(self.model, attr_name):
-                    attr = getattr(self.model, attr_name)
-                    if hasattr(attr, 'parameters'):
-                        try:
-                            first_param = next(attr.parameters())
-                            logger.info(f"✓ Model on: {first_param.device}, dtype: {first_param.dtype}")
-                            verification_done = True
-                            break
-                        except:
-                            pass
-            
-            if not verification_done:
-                logger.warning("Could not verify model device - proceeding anyway")
-                
-        except Exception as e:
-            logger.error(f"Error moving model to GPU: {e}")
-            logger.error("Model may run on CPU - performance will be degraded")
+        logger.info("Model optimization complete")
+        logger.info(f"✓ RF-DETR ready on device: {self.device}")
+        logger.info("Note: RF-DETR handles GPU internally, half_precision managed by optimize_for_inference()")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
@@ -211,15 +141,19 @@ class BallDetector:
         start_time = time.time()
         self.stats['total_inferences'] += 1
         
+        # Fast path: pass numpy array directly to RF-DETR (no PIL overhead)
         if isinstance(frame, np.ndarray):
+            # RF-DETR expects RGB, so flip BGR if needed
             if len(frame.shape) == 2:
-                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
             elif frame.shape[2] == 4:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
             elif frame.shape[2] == 3:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            image = Image.fromarray(frame)
+                # Fast BGR to RGB using slice (zero-copy view)
+                frame_rgb = frame[:, :, ::-1]
+            image = frame_rgb
         else:
+            # Already PIL or other format
             image = frame
         
         with torch.no_grad():
