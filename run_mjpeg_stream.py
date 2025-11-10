@@ -292,11 +292,19 @@ def main():
                         roi_stable_frames = 0
                         roi_last_valid_pos = None
             
-            # Spatial filter: exclude upper region (stands/lights)
-            # Only reject detections in the TOP 25% of frame where stands/lights are
+            # Spatial filter: exclude stands/lights regions (top + sides)
+            # TOP: Reject detections in upper 25% of frame (stands/lights)
+            # SIDES: Reject detections in outer 15% on left and right (side stands)
             if ball_detection is not None:
                 bx, by, bw, bh, bconf = ball_detection
+                # Exclude top region
                 if by < reader.height * 0.25:
+                    ball_detection = None
+                # Exclude left side region
+                elif bx < reader.width * 0.15:
+                    ball_detection = None
+                # Exclude right side region
+                elif bx > reader.width * 0.85:
                     ball_detection = None
             
             # Filter all_detections as well
@@ -304,7 +312,10 @@ def main():
                 filtered_dets = []
                 for d in all_detections:
                     dx, dy = d[0], d[1]
-                    if dy >= reader.height * 0.25:
+                    # Keep only detections in valid playing field area
+                    if (dy >= reader.height * 0.25 and 
+                        dx >= reader.width * 0.15 and 
+                        dx <= reader.width * 0.85):
                         filtered_dets.append(d)
                 all_detections = filtered_dets if filtered_dets else None
             
