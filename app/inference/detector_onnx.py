@@ -32,11 +32,15 @@ if not logger.handlers:
 class BallDetectorONNX:
     """ONNX Runtime-powered ball detector"""
     
+    # ImageNet normalization constants used by RF-DETR
+    MEANS = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    STDS = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    
     def __init__(
         self,
         onnx_path: str,
         confidence_threshold: float = 0.12,
-        imgsz: int = 480,
+        imgsz: int = 640,  # Changed default to 640 to match PyTorch version
         **kwargs  # Absorb other unused params
     ):
         logger.info(f"🚀 Initializing ONNX Runtime Ball Detector")
@@ -81,19 +85,95 @@ class BallDetectorONNX:
         }
     
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:
-        """Preprocess frame for ONNX model"""
-        # Resize
+        """Preprocess frame for ONNX model following RF-DETR official preprocessing"""
+        # Store original dimensions for later
+        self._original_h, self._original_w = frame.shape[:2]
+        
+        # Resize to model input size (stretch to square)
         if frame.shape[0] != self.imgsz or frame.shape[1] != self.imgsz:
             frame = cv2.resize(frame, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
         
         # BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Normalize to [0, 1] and CHW format
-        frame_chw = (frame_rgb.astype(np.float32) / 255.0).transpose(2, 0, 1)
+        # Normalize to [0, 1]
+        frame_normalized = frame_rgb.astype(np.float32) / 255.0
         
-        # Add batch dimension
-        return np.expand_dims(frame_chw, axis=0)
+        # Apply ImageNet normalization: (image - mean) / std
+        # Broadcasting: subtract mean and divide by std for each channel
+        frame_normalized = (frame_normalized - self.MEANS) / self.STDS
+        
+        # Convert to CHW format (Channel, Height, Width)
+        frame_chw = frame_normalized.transpose(2, 0, 1)
+        
+        # Add batch dimension: (1, C, H, W)
+        return np.expand_dims(frame_chw, axis=0).astype(np.float32)
+    
+    def _postprocess(self, outputs: List[np.ndarray], original_shape: Tuple[int, int]) -> List[Tuple]:
+        """Post-process model outputs following RF-DETR official post-processing"""
+        if len(outputs) < 2:
+            logger.warning("ONNX output has less than 2 tensors")
+            return []
+        
+        boxes = outputs[0]  # Format: [batch, num_queries, 4] in cxcywh normalized [0,1]
+        logits = outputs[1]  # Format: [batch, num_queries, num_classes]
+        
+        # Remove batch dimension
+        if boxes.ndim == 3:
+            boxes = boxes[0]
+        if logits.ndim == 3:
+            logits = logits[0]
+        
+        logger.debug(f"Boxes shape after squeeze: {boxes.shape}")
+        logger.debug(f"Logits shape after squeeze: {logits.shape}")
+        
+        # Apply sigmoid to get probabilities
+        scores = 1.0 / (1.0 + np.exp(-logits))  # sigmoid
+        
+        # Get max score and class per detection
+        if scores.ndim == 1:
+            max_scores = scores
+            class_ids = np.zeros(len(scores), dtype=np.int32)
+        else:
+            max_scores = np.max(scores, axis=1)
+            class_ids = np.argmax(scores, axis=1)
+        
+        logger.debug(f"Max scores range: {max_scores.min():.4f} - {max_scores.max():.4f}")
+        logger.debug(f"Scores > threshold ({self.confidence_threshold}): {np.sum(max_scores > self.confidence_threshold)}")
+        
+        # Filter by confidence threshold
+        mask = max_scores > self.confidence_threshold
+        boxes_filtered = boxes[mask]
+        scores_filtered = max_scores[mask]
+        classes_filtered = class_ids[mask]
+        
+        orig_h, orig_w = original_shape
+        detections = []
+        
+        for i, (box, score, class_id) in enumerate(zip(boxes_filtered, scores_filtered, classes_filtered)):
+            logger.debug(f"Detection {i}: box_raw={box}, score={score:.4f}, class={class_id}")
+            
+            # RF-DETR outputs boxes in cxcywh format normalized to [0, 1]
+            # Convert to pixel coordinates in original image
+            cx_norm, cy_norm, w_norm, h_norm = box[0], box[1], box[2], box[3]
+            
+            # Scale to original image dimensions
+            x_center = cx_norm * orig_w
+            y_center = cy_norm * orig_h
+            width = w_norm * orig_w
+            height = h_norm * orig_h
+            
+            logger.debug(f"  → Scaled: cx={x_center:.1f}, cy={y_center:.1f}, w={width:.1f}, h={height:.1f}")
+            
+            if width > 0 and height > 0:
+                detections.append((x_center, y_center, width, height, float(score), int(class_id)))
+            else:
+                logger.warning(f"  → SKIPPED: Invalid dimensions w={width} h={height}")
+        
+        logger.info(f"✓ Returning {len(detections)} valid detections")
+        if detections:
+            logger.info(f"  Best detection: {detections[0]}")
+        return detections
     
     def predict(self, frame: np.ndarray, **kwargs) -> List[Tuple]:
         start_time = time.time()
@@ -122,60 +202,6 @@ class BallDetectorONNX:
         
         return detections
     
-    def _postprocess(self, outputs: List[np.ndarray], original_shape: Tuple[int, int]) -> List[Tuple]:
-        if len(outputs) < 2:
-            logger.warning("ONNX output has less than 2 tensors")
-            return []
-        
-        boxes = outputs[0]
-        logits = outputs[1]
-        
-        if boxes.ndim == 3:
-            boxes = boxes[0]
-        if logits.ndim == 3:
-            logits = logits[0]
-        
-        logger.debug(f"Boxes shape after squeeze: {boxes.shape}")
-        logger.debug(f"Logits shape after squeeze: {logits.shape}")
-        
-        scores = 1.0 / (1.0 + np.exp(-logits))
-        
-        if scores.ndim == 1:
-            max_scores = scores
-            class_ids = np.zeros(len(scores), dtype=np.int32)
-        else:
-            max_scores = np.max(scores, axis=1)
-            class_ids = np.argmax(scores, axis=1)
-        
-        logger.debug(f"Max scores range: {max_scores.min():.4f} - {max_scores.max():.4f}")
-        logger.debug(f"Scores > threshold ({self.confidence_threshold}): {np.sum(max_scores > self.confidence_threshold)}")
-        
-        mask = max_scores > self.confidence_threshold
-        boxes_filtered = boxes[mask]
-        scores_filtered = max_scores[mask]
-        classes_filtered = class_ids[mask]
-        
-        orig_h, orig_w = original_shape
-        detections = []
-        for i, (box, score, class_id) in enumerate(zip(boxes_filtered, scores_filtered, classes_filtered)):
-            logger.debug(f"Detection {i}: box_raw={box}, score={score:.4f}, class={class_id}")
-            
-            x_center = box[0] * orig_w
-            y_center = box[1] * orig_h
-            width = box[2] * orig_w
-            height = box[3] * orig_h
-            
-            logger.debug(f"  → Scaled: cx={x_center:.1f}, cy={y_center:.1f}, w={width:.1f}, h={height:.1f}")
-            
-            if width > 0 and height > 0:
-                detections.append((x_center, y_center, width, height, float(score), int(class_id)))
-            else:
-                logger.warning(f"  → SKIPPED: Invalid dimensions w={width} h={height}")
-        
-        logger.info(f"✓ Returning {len(detections)} valid detections")
-        if detections:
-            logger.info(f"  Best detection: {detections[0]}")
-        return detections
     
     def predict_ball_only(
         self, 
