@@ -156,8 +156,8 @@ def main():
     # Loop detection and recovery
     last_tracking_state = False
     tracking_state_changes = []
-    loop_detection_window = 30  # frames
-    loop_threshold = 5  # changes in window
+    loop_detection_window = 45  # frames (increased from 30 for less sensitivity)
+    loop_threshold = 8  # changes in window (increased from 5 to reduce false positives)
     consecutive_det_frames = 0  # consecutive frames with detection
     target_zoom_before_loss = 1.0
 
@@ -195,9 +195,9 @@ def main():
     zoom_target_lp = 1.0
     roi_active = False
     roi_stable_frames = 0
-    roi_ready_frames = 25
+    roi_ready_frames = 40  # Increased from 25 (~1.3s) for more stable activation
     roi_fail_count = 0
-    roi_fail_max = 120  # 4 seconds at 30fps
+    roi_fail_max = 150  # Increased from 120 (5 seconds) to prevent premature deactivation
     roi_last_valid_pos = None
     bloom_counter = 0
     bloom_max = 12
