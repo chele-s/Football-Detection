@@ -19,7 +19,6 @@ from pathlib import Path
 from collections import deque
 from PIL import Image
 import cv2
-from torch.cuda.amp import autocast
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +56,12 @@ class BallDetector:
             self.device = device
         
         self.half_precision = half_precision and self.device == 'cuda'
-        self.use_amp = self.half_precision
         
         logger.info(f"Initializing BallDetector with RF-DETR Medium")
         if self.model_path:
             logger.info(f"Custom model path: {self.model_path}")
         logger.info(f"Device: {self.device}")
-        logger.info(f"AMP FP16: {self.use_amp}")
+        logger.info(f"Half precision: {self.half_precision}")
         logger.info(f"Image size: {self.imgsz}")
         
         from rfdetr import RFDETRMedium
@@ -90,12 +88,7 @@ class BallDetector:
             torch.backends.cudnn.benchmark = True
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-            torch.backends.cudnn.deterministic = False
-            torch.backends.cudnn.enabled = True
-            
-            if self.use_amp:
-                logger.info("✓ AMP FP16 enabled - expect 2-3x speedup on T4")
-            logger.info("✓ CUDA optimizations enabled")
+            logger.info("CUDA optimizations enabled")
         
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
         self.model.optimize_for_inference()
@@ -115,15 +108,8 @@ class BallDetector:
                 except Exception as e:
                     logger.warning(f"Could not apply torch.compile(): {e}")
         
-        if self.device == 'cuda' and torch.cuda.is_available():
-            self.stream = torch.cuda.Stream()
-            torch.cuda.set_stream(self.stream)
-            logger.info("✓ CUDA stream created for optimized pipeline")
-        else:
-            self.stream = None
-        
         logger.info(f"✓ RF-DETR ready on device: {self.device}")
-        logger.info(f"✓ Optimizations: optimize_for_inference + torch.compile + AMP FP16 + CUDA stream")
+        logger.info("Note: RF-DETR handles GPU internally, half_precision managed by optimize_for_inference()")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
@@ -186,18 +172,10 @@ class BallDetector:
             image = frame
         
         with torch.no_grad():
-            if self.use_amp and self.device == 'cuda':
-                with autocast(dtype=torch.float16):
-                    if self.multi_scale:
-                        logger.warning("Multi-scale disabled during AMP for speed")
-                        detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
-                    else:
-                        detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
+            if self.multi_scale:
+                detections_sv = self._multi_scale_inference(image)
             else:
-                if self.multi_scale:
-                    detections_sv = self._multi_scale_inference(image)
-                else:
-                    detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
+                detections_sv = self.model.predict(image, threshold=self.confidence_threshold)
         
         inference_time = (time.time() - start_time) * 1000
         self.inference_times.append(inference_time)
