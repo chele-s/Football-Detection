@@ -13,3 +13,4 @@ streamlit>=1.28.0
 requests>=2.31.0
 streamlit-autorefresh>=1.0.1
 pyngrok>=7.1.0
+onnxruntime-gpu>=1.16.0  # For ONNX acceleration (alternative to TensorRT)

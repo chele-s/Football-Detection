@@ -70,18 +70,38 @@ def main():
     stream_config = load_config('configs/stream_config.yml')
     config = merge_configs(model_config, stream_config)
     
-    # Initialize detector
+    # Initialize detector (auto-detect model type)
     print("[2/5] Loading RF-DETR model...")
-    detector = BallDetector(
-        model_path=config['model']['path'],
-        confidence_threshold=config['model']['confidence'],
-        iou_threshold=config['model'].get('iou_threshold', 0.45),
-        device=config['model'].get('device', 'cuda'),
-        half_precision=config['model'].get('half_precision', True),
-        imgsz=config['model'].get('imgsz', 640),
-        multi_scale=config['model'].get('multi_scale', False),
-        warmup_iterations=config['model'].get('warmup_iterations', 3)
-    )
+    model_path = config['model']['path']
+    
+    if model_path and model_path.endswith('.onnx'):
+        from app.Inference.detector_onnx import BallDetectorONNX
+        print("    Using ONNX Runtime backend")
+        detector = BallDetectorONNX(
+            onnx_path=model_path,
+            confidence_threshold=config['model']['confidence'],
+            imgsz=config['model'].get('imgsz', 640)
+        )
+    elif model_path and model_path.endswith('.engine'):
+        from app.Inference.detector_tensorrt import BallDetectorTensorRT
+        print("    Using TensorRT backend")
+        detector = BallDetectorTensorRT(
+            engine_path=model_path,
+            confidence_threshold=config['model']['confidence'],
+            imgsz=config['model'].get('imgsz', 640)
+        )
+    else:
+        print("    Using PyTorch backend")
+        detector = BallDetector(
+            model_path=model_path,
+            confidence_threshold=config['model']['confidence'],
+            iou_threshold=config['model'].get('iou_threshold', 0.45),
+            device=config['model'].get('device', 'cuda'),
+            half_precision=config['model'].get('half_precision', True),
+            imgsz=config['model'].get('imgsz', 640),
+            multi_scale=config['model'].get('multi_scale', False),
+            warmup_iterations=config['model'].get('warmup_iterations', 3)
+        )
     
     # Initialize tracker with optimized parameters for ball tracking
     print("[3/5] Initializing ball tracker...")
