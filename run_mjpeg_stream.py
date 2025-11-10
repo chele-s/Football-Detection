@@ -617,20 +617,32 @@ def main():
             # CRITICAL: Heavy smoothing on crop coordinates to eliminate jitter
             if prev_crop is not None:
                 pcx1, pcy1, pcx2, pcy2 = prev_crop
-                # Exponential smoothing with very low alpha (0.15 = keep 85% of previous crop)
-                alpha_crop = 0.15
-                x1 = int(pcx1 * (1.0 - alpha_crop) + x1 * alpha_crop)
-                y1 = int(pcy1 * (1.0 - alpha_crop) + y1 * alpha_crop)
-                x2 = int(pcx2 * (1.0 - alpha_crop) + x2 * alpha_crop)
-                y2 = int(pcy2 * (1.0 - alpha_crop) + y2 * alpha_crop)
+                # Exponential smoothing - EXTRA heavy on Y axis when predicting
+                # When predicting (det_ok=False), nearly freeze vertical movement
+                if det_ok:
+                    # Has real detection - moderate smoothing
+                    alpha_x = 0.12
+                    alpha_y = 0.10
+                else:
+                    # Predicting - MUCH heavier smoothing, especially vertical
+                    alpha_x = 0.08
+                    alpha_y = 0.03  # 97% keep previous Y position - nearly frozen
+                
+                x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
+                y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
+                x2 = int(pcx2 * (1.0 - alpha_x) + x2 * alpha_x)
+                y2 = int(pcy2 * (1.0 - alpha_y) + y2 * alpha_y)
                 
                 # Additional step limiter as backup
-                step_lim = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 0.8))
-                if abs(x1 - pcx1) > step_lim:
-                    x1 = pcx1 + step_lim if x1 > pcx1 else pcx1 - step_lim
+                step_lim_x = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 0.8))
+                # Y axis - MUCH stricter limit when predicting to prevent vertical drift
+                step_lim_y = int(step_lim_x * 0.5) if not det_ok else step_lim_x
+                
+                if abs(x1 - pcx1) > step_lim_x:
+                    x1 = pcx1 + step_lim_x if x1 > pcx1 else pcx1 - step_lim_x
                     x2 = x1 + (pcx2 - pcx1)
-                if abs(y1 - pcy1) > step_lim:
-                    y1 = pcy1 + step_lim if y1 > pcy1 else pcy1 - step_lim
+                if abs(y1 - pcy1) > step_lim_y:
+                    y1 = pcy1 + step_lim_y if y1 > pcy1 else pcy1 - step_lim_y
                     y2 = y1 + (pcy2 - pcy1)
             if x1 < 0: x1 = 0
             if y1 < 0: y1 = 0
