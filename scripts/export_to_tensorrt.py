@@ -23,19 +23,21 @@ def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480
     """Export RF-DETR model to ONNX format using native export() method"""
     print(f"[1/3] Loading RF-DETR model from {checkpoint_path}")
     
-    # Change to output directory for export
-    output_dir = Path(output_path).parent
+    # Convert to absolute paths before changing directory
+    checkpoint_path = Path(checkpoint_path).resolve()
+    output_path = Path(output_path).resolve()
+    output_dir = output_path.parent
     output_dir.mkdir(exist_ok=True, parents=True)
     
     # Save current directory and change to output dir
-    original_dir = os.getcwd()
+    original_dir = Path.cwd()
     os.chdir(output_dir)
     
     try:
         model = RFDETRMedium(
             num_classes=1,
             resolution=resolution,
-            pretrain_weights=str(Path(original_dir) / checkpoint_path)
+            pretrain_weights=str(checkpoint_path)
         )
         
         model.optimize_for_inference()
@@ -47,7 +49,7 @@ def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480
         # This creates "inference_model.onnx" in current directory or "output/" subdirectory
         model.export()
         
-        # Check multiple possible locations
+        # Check multiple possible locations (relative to current directory)
         possible_locations = [
             Path("inference_model.onnx"),
             Path("output/inference_model.onnx"),
@@ -57,27 +59,23 @@ def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480
         default_onnx = None
         for loc in possible_locations:
             if loc.exists():
-                default_onnx = loc
+                default_onnx = loc.resolve()  # Get absolute path
                 print(f"✓ Found ONNX at: {loc}")
                 break
         
         if default_onnx is None:
             raise FileNotFoundError(f"ONNX export failed - checked locations: {possible_locations}")
         
-        # Move to desired location
-        target_onnx = Path(output_path).name
-        target_path = output_dir / target_onnx
-        
-        # Copy instead of rename to handle cross-directory moves
+        # Copy to desired location using absolute paths
         import shutil
-        shutil.copy2(default_onnx, target_path)
+        shutil.copy2(str(default_onnx), str(output_path))
         
-        print(f"✓ ONNX export complete: {target_path}")
-        return str(target_path)
+        print(f"✓ ONNX export complete: {output_path}")
+        return str(output_path)
             
     finally:
         # Restore original directory
-        os.chdir(original_dir)
+        os.chdir(str(original_dir))
 
 
 def build_tensorrt_engine(onnx_path: str, engine_path: str, fp16: bool = True):
