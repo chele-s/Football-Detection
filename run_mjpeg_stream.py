@@ -308,10 +308,12 @@ def main():
                 if anchor is None:
                     anchor = (x, y)
                 use_x, use_y = x, y
-                # Update last_det for visual overlay
+                # Update last_det for visual overlay and det_ok flag
+                det_ok = False
                 if ball_detection:
                     bx, by, bw, bh, bconf = ball_detection
                     last_det = (bx, by)
+                    det_ok = True
 
                 if is_tracking and kalman_ok and cooldown == 0:
                     d = math.hypot(x - last_stable[0], y - last_stable[1])
