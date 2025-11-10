@@ -94,6 +94,18 @@ class BallDetector:
         logger.info("Model optimization complete - ready for inference")
         logger.info("Note: torch.compile skipped - RF-DETR uses its own optimization")
         
+        # CRITICAL: Move model to GPU
+        logger.info(f"Moving model to device: {self.device}")
+        self.model = self.model.to(self.device)
+        
+        # Apply half precision if enabled
+        if self.half_precision:
+            logger.info("Converting model to FP16 (half precision)")
+            self.model = self.model.half()
+            logger.info("Model converted to FP16 successfully")
+        
+        logger.info(f"Model ready on {self.device} with {'FP16' if self.half_precision else 'FP32'} precision")
+        
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
         self.confidence_history = deque(maxlen=100)
@@ -151,6 +163,12 @@ class BallDetector:
             image = frame
         
         with torch.no_grad():
+            # Verify model is on GPU (first inference only)
+            if self.stats['total_inferences'] == 1 and torch.cuda.is_available():
+                model_device = next(self.model.parameters()).device
+                model_dtype = next(self.model.parameters()).dtype
+                logger.info(f"[VERIFICATION] Model is on: {model_device}, dtype: {model_dtype}")
+            
             if self.multi_scale:
                 detections_sv = self._multi_scale_inference(image)
             else:
