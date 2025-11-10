@@ -7,7 +7,7 @@ model:
   imgsz: 480
   multi_scale: false
   warmup_iterations: 3
-  ball_class_id: 0
+  ball_class_id: 1
 
 tracking:
   max_lost_frames: 15
