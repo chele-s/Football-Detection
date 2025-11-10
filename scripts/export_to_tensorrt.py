@@ -84,9 +84,45 @@ def build_tensorrt_engine(onnx_path: str, engine_path: str, fp16: bool = True):
     
     # Use trtexec command-line tool (more robust than Python API)
     import subprocess
+    import shutil
+    
+    # Find trtexec in common locations
+    trtexec_paths = [
+        "trtexec",  # In PATH
+        "/usr/bin/trtexec",
+        "/usr/local/bin/trtexec",
+        "/usr/src/tensorrt/bin/trtexec",
+        "/opt/tensorrt/bin/trtexec",
+    ]
+    
+    trtexec_cmd = None
+    for path in trtexec_paths:
+        if shutil.which(path) or Path(path).exists():
+            trtexec_cmd = path
+            print(f"✓ Found trtexec at: {path}")
+            break
+    
+    if trtexec_cmd is None:
+        print("❌ trtexec not found in common locations:")
+        for p in trtexec_paths:
+            print(f"   - {p}")
+        print("\nTrying to find it...")
+        try:
+            result = subprocess.run(["find", "/usr", "-name", "trtexec", "-type", "f"], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.stdout.strip():
+                trtexec_cmd = result.stdout.strip().split('\n')[0]
+                print(f"✓ Found trtexec at: {trtexec_cmd}")
+            else:
+                print("❌ trtexec not found on system")
+                print("   Install with: pip install tensorrt")
+                return None
+        except:
+            print("❌ Could not locate trtexec")
+            return None
     
     cmd = [
-        "trtexec",
+        trtexec_cmd,
         f"--onnx={onnx_path}",
         f"--saveEngine={engine_path}",
         "--memPoolSize=workspace:4096",  # 4GB workspace
