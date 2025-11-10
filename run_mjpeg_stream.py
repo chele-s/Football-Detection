@@ -160,12 +160,6 @@ def main():
     loop_threshold = 5  # changes in window
     consecutive_det_frames = 0  # consecutive frames with detection
     target_zoom_before_loss = 1.0
-    
-    # LOST state recovery
-    consecutive_lost_count = 0
-    lost_recovery_cooldown = 0
-    lost_recovery_cooldown_max = 90  # 3 seconds at 30fps
-    lost_recovery_threshold = 4  # 4 SEARCHING states trigger recovery
 
     zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.060, damping=0.60, max_rate=0.11, max_rate_in=0.14, max_rate_out=0.10, accel_limit=0.05)
     diag = int(math.hypot(reader.width, reader.height))
@@ -341,24 +335,6 @@ def main():
             
             track_result = tracker.update(ball_detection, all_detections)
             
-            # LOST Recovery: If in cooldown, move to center and search
-            if lost_recovery_cooldown > 0:
-                lost_recovery_cooldown -= 1
-                # Force camera to center with full view
-                center_x = reader.width // 2
-                center_y = reader.height // 2
-                crop_coords = virtual_camera.update(center_x, center_y, time.time(), velocity_hint=(0, 0))
-                target_zoom_level = 1.0
-                roi_active = False
-                roi_stable_frames = 0
-                roi_fail_count = 0
-                lost_search_center = None
-                
-                if lost_recovery_cooldown == 0:
-                    print(f"✓ Recovery cooldown ended - resuming normal tracking")
-                elif lost_recovery_cooldown % 30 == 0:  # Log every second
-                    print(f"⏳ Recovery cooldown: {lost_recovery_cooldown // 30} seconds remaining")
-            
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
                 virtual_camera.reset()
@@ -396,19 +372,7 @@ def main():
                         target_zoom_level = 1.0
                         tracking_state_changes.clear()
                         consecutive_det_frames = 0
-                        consecutive_lost_count = 0  # Reset LOST counter
                 last_tracking_state = is_tracking
-                
-                # Detect 4 consecutive LOST states and trigger recovery cooldown
-                if not is_tracking:
-                    consecutive_lost_count += 1
-                    if consecutive_lost_count >= lost_recovery_threshold and lost_recovery_cooldown == 0:
-                        print(f"⚠ 4 SEARCHING states detected - Starting 3-second recovery cooldown")
-                        lost_recovery_cooldown = lost_recovery_cooldown_max
-                        consecutive_lost_count = 0
-                else:
-                    # Reset counter when tracking is regained
-                    consecutive_lost_count = 0
                 
                 # Track consecutive detection frames
                 if det_ok and ball_detection:
