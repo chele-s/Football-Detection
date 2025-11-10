@@ -20,6 +20,13 @@ except ImportError:
     raise ImportError("Please install onnxruntime-gpu: pip install onnxruntime-gpu")
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('[ONNX] %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 class BallDetectorONNX:
@@ -54,15 +61,16 @@ class BallDetectorONNX:
             providers=providers
         )
         
-        # Get input/output names
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [out.name for out in self.session.get_outputs()]
         
         provider = self.session.get_providers()[0]
         logger.info(f"✓ ONNX Runtime session created")
         logger.info(f"✓ Using provider: {provider}")
-        logger.info(f"✓ Input: {self.input_name}")
-        logger.info(f"✓ Outputs: {self.output_names}")
+        logger.info(f"✓ Input: {self.input_name} shape={self.session.get_inputs()[0].shape}")
+        logger.info(f"✓ Outputs: {len(self.output_names)} tensors")
+        for i, out in enumerate(self.session.get_outputs()):
+            logger.info(f"    Output {i}: {out.name} shape={out.shape}")
         
         # Init stats
         self.inference_times = deque(maxlen=100)
@@ -88,24 +96,21 @@ class BallDetectorONNX:
         return np.expand_dims(frame_chw, axis=0)
     
     def predict(self, frame: np.ndarray, **kwargs) -> List[Tuple]:
-        """Run inference on frame"""
         start_time = time.time()
         self.stats['total_inferences'] += 1
         
-        # Preprocess
         input_data = self._preprocess(frame)
         
-        # Run inference
         outputs = self.session.run(
             self.output_names,
             {self.input_name: input_data}
         )
         
-        # Parse outputs (RF-DETR outputs boxes and labels)
-        # Format depends on ONNX export, typically:
-        # outputs[0] = boxes [N, 4]
-        # outputs[1] = labels/scores [N, num_classes]
-        detections = self._postprocess(outputs)
+        logger.debug(f"ONNX outputs: {len(outputs)} tensors")
+        for i, out in enumerate(outputs):
+            logger.debug(f"  Output {i}: shape={out.shape}, dtype={out.dtype}")
+        
+        detections = self._postprocess(outputs, frame.shape[:2])
         
         inference_time = (time.time() - start_time) * 1000
         self.inference_times.append(inference_time)
@@ -117,32 +122,51 @@ class BallDetectorONNX:
         
         return detections
     
-    def _postprocess(self, outputs: List[np.ndarray]) -> List[Tuple]:
+    def _postprocess(self, outputs: List[np.ndarray], original_shape: Tuple[int, int]) -> List[Tuple]:
         if len(outputs) < 2:
+            logger.warning("ONNX output has less than 2 tensors")
             return []
         
-        boxes, logits = outputs[0][0], outputs[1][0]
+        boxes = outputs[0]
+        logits = outputs[1]
+        
+        if boxes.ndim == 3:
+            boxes = boxes[0]
+        if logits.ndim == 3:
+            logits = logits[0]
+        
+        logger.debug(f"Boxes shape after squeeze: {boxes.shape}")
+        logger.debug(f"Logits shape after squeeze: {logits.shape}")
+        
         scores = 1.0 / (1.0 + np.exp(-logits))
-        max_scores = np.max(scores, axis=1)
-        class_ids = np.argmax(scores, axis=1)
+        
+        if scores.ndim == 1:
+            max_scores = scores
+            class_ids = np.zeros(len(scores), dtype=np.int32)
+        else:
+            max_scores = np.max(scores, axis=1)
+            class_ids = np.argmax(scores, axis=1)
+        
+        logger.debug(f"Max scores range: {max_scores.min():.4f} - {max_scores.max():.4f}")
+        logger.debug(f"Scores > threshold ({self.confidence_threshold}): {np.sum(max_scores > self.confidence_threshold)}")
         
         mask = max_scores > self.confidence_threshold
         boxes_filtered = boxes[mask]
         scores_filtered = max_scores[mask]
         classes_filtered = class_ids[mask]
         
-        scale = self.imgsz
-        return [
-            (
-                box[0] * scale,
-                box[1] * scale,
-                box[2] * scale,
-                box[3] * scale,
-                float(score),
-                int(class_id)
-            )
-            for box, score, class_id in zip(boxes_filtered, scores_filtered, classes_filtered)
-        ]
+        orig_h, orig_w = original_shape
+        detections = []
+        for box, score, class_id in zip(boxes_filtered, scores_filtered, classes_filtered):
+            x_center = box[0] * orig_w
+            y_center = box[1] * orig_h
+            width = box[2] * orig_w
+            height = box[3] * orig_h
+            
+            detections.append((x_center, y_center, width, height, float(score), int(class_id)))
+        
+        logger.debug(f"Final detections: {len(detections)}")
+        return detections
     
     def predict_ball_only(
         self, 
