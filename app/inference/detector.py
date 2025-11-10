@@ -69,15 +69,20 @@ class BallDetector:
         logger.info("Initializing RF-DETR Medium model...")
         if self.model_path and self.model_path.exists():
             logger.info(f"Loading fine-tuned checkpoint: {self.model_path}")
+            # RF-DETR accepts device parameter
             self.model = RFDETRMedium(
                 num_classes=1,
                 resolution=self.imgsz,
-                pretrain_weights=str(self.model_path)
+                pretrain_weights=str(self.model_path),
+                device=self.device
             )
             logger.info("Custom model weights loaded successfully")
         else:
             logger.warning("No custom model found, using COCO pretrained weights")
-            self.model = RFDETRMedium(resolution=self.imgsz)
+            self.model = RFDETRMedium(
+                resolution=self.imgsz,
+                device=self.device
+            )
         
         if self.device == 'cuda' and torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
@@ -94,17 +99,18 @@ class BallDetector:
         logger.info("Model optimization complete - ready for inference")
         logger.info("Note: torch.compile skipped - RF-DETR uses its own optimization")
         
-        # CRITICAL: Move model to GPU
-        logger.info(f"Moving model to device: {self.device}")
-        self.model = self.model.to(self.device)
+        # RF-DETR handles device internally, verify it's using GPU
+        logger.info(f"RF-DETR configured for device: {self.device}")
+        logger.info(f"FP16 enabled: {self.half_precision}")
+        logger.info("Note: RF-DETR manages GPU/FP16 internally via optimize_for_inference()")
         
-        # Apply half precision if enabled
-        if self.half_precision:
-            logger.info("Converting model to FP16 (half precision)")
-            self.model = self.model.half()
-            logger.info("Model converted to FP16 successfully")
-        
-        logger.info(f"Model ready on {self.device} with {'FP16' if self.half_precision else 'FP32'} precision")
+        # Verify model is actually on GPU by checking internal model
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'device'):
+            actual_device = self.model.model.device
+            logger.info(f"Internal model device: {actual_device}")
+        elif hasattr(self.model, 'device'):
+            actual_device = self.model.device
+            logger.info(f"Model device: {actual_device}")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
@@ -165,9 +171,13 @@ class BallDetector:
         with torch.no_grad():
             # Verify model is on GPU (first inference only)
             if self.stats['total_inferences'] == 1 and torch.cuda.is_available():
-                model_device = next(self.model.parameters()).device
-                model_dtype = next(self.model.parameters()).dtype
-                logger.info(f"[VERIFICATION] Model is on: {model_device}, dtype: {model_dtype}")
+                if hasattr(self.model, 'model'):
+                    try:
+                        model_device = next(self.model.model.parameters()).device
+                        model_dtype = next(self.model.model.parameters()).dtype
+                        logger.info(f"[VERIFICATION] Internal model on: {model_device}, dtype: {model_dtype}")
+                    except:
+                        logger.warning("Could not verify internal model device")
             
             if self.multi_scale:
                 detections_sv = self._multi_scale_inference(image)
