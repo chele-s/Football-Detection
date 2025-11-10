@@ -164,6 +164,7 @@ def main():
     camera_initialized = False
     detection_count = 0
     lost_count = 0
+    crop_coords = (0, 0, reader.width, reader.height)
     
     # Fast zoom system
     current_zoom_level = 1.0

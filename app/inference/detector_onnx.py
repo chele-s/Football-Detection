@@ -118,40 +118,31 @@ class BallDetectorONNX:
         return detections
     
     def _postprocess(self, outputs: List[np.ndarray]) -> List[Tuple]:
-        """
-        Post-process ONNX outputs to standard format.
+        if len(outputs) < 2:
+            return []
         
-        Returns list of (x_center, y_center, width, height, score, class_id)
-        """
-        detections = []
+        boxes, logits = outputs[0][0], outputs[1][0]
+        scores = 1.0 / (1.0 + np.exp(-logits))
+        max_scores = np.max(scores, axis=1)
+        class_ids = np.argmax(scores, axis=1)
         
-        # RF-DETR ONNX export typically outputs:
-        # outputs[0] = pred_boxes [1, num_queries, 4] (normalized x,y,w,h)
-        # outputs[1] = pred_logits [1, num_queries, num_classes]
+        mask = max_scores > self.confidence_threshold
+        boxes_filtered = boxes[mask]
+        scores_filtered = max_scores[mask]
+        classes_filtered = class_ids[mask]
         
-        if len(outputs) >= 2:
-            boxes = outputs[0][0]  # Remove batch dim
-            logits = outputs[1][0]  # Remove batch dim
-            
-            # Get scores (apply sigmoid or softmax depending on model)
-            scores = 1 / (1 + np.exp(-logits))  # Sigmoid
-            max_scores = np.max(scores, axis=1)
-            class_ids = np.argmax(scores, axis=1)
-            
-            # Filter by confidence
-            mask = max_scores > self.confidence_threshold
-            
-            for box, score, class_id in zip(boxes[mask], max_scores[mask], class_ids[mask]):
-                # box is [x_center, y_center, width, height] normalized [0, 1]
-                # Scale to image size
-                x_center = box[0] * self.imgsz
-                y_center = box[1] * self.imgsz
-                width = box[2] * self.imgsz
-                height = box[3] * self.imgsz
-                
-                detections.append((x_center, y_center, width, height, float(score), int(class_id)))
-        
-        return detections
+        scale = self.imgsz
+        return [
+            (
+                box[0] * scale,
+                box[1] * scale,
+                box[2] * scale,
+                box[3] * scale,
+                float(score),
+                int(class_id)
+            )
+            for box, score, class_id in zip(boxes_filtered, scores_filtered, classes_filtered)
+        ]
     
     def predict_ball_only(
         self, 
@@ -161,22 +152,13 @@ class BallDetectorONNX:
         return_candidates: bool = False
     ) -> Optional[Tuple]:
         detections = self.predict(frame)
-        
-        # Filter by class_id
         ball_detections = [d for d in detections if d[5] == ball_class_id] if detections else []
         
         if not ball_detections:
-            if return_candidates:
-                return None, detections
-            return None
+            return (None, detections) if return_candidates else None
         
-        # Get best detection (highest confidence)
-        best_detection = max(ball_detections, key=lambda x: x[4])
-        detection_tuple = best_detection[:5]  # (x, y, w, h, conf)
-        
-        if return_candidates:
-            return detection_tuple, detections
-        return detection_tuple
+        best_detection = max(ball_detections, key=lambda x: x[4])[:5]
+        return (best_detection, detections) if return_candidates else best_detection
     
     def get_stats(self) -> dict:
         """Get detector statistics"""
