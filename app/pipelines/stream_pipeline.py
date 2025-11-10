@@ -204,7 +204,6 @@ class StreamPipeline:
         last_det = None
         prev_zoom_center = None
         prev_crop = None
-        max_crop_step_base = max(4, int(diag * 0.008))
         roi_active = False
         roi_stable_frames = 0
         roi_ready_frames = 35
@@ -557,35 +556,8 @@ class StreamPipeline:
                             y2 = y1 + zoomed_height
                 x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
                 
-                if prev_crop is not None:
-                    pcx1, pcy1, pcx2, pcy2 = prev_crop
-                    
-                    if track_result and is_tracking and ball_detection:
-                        alpha_x = 0.14
-                        alpha_y = 0.12
-                    else:
-                        alpha_x = 0.08
-                        alpha_y = 0.0
-                    
-                    x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
-                    if alpha_y > 0:
-                        y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
-                    else:
-                        y1 = pcy1
-                    x2 = int(pcx2 * (1.0 - alpha_x) + x2 * alpha_x)
-                    if alpha_y > 0:
-                        y2 = int(pcy2 * (1.0 - alpha_y) + y2 * alpha_y)
-                    else:
-                        y2 = pcy2
-                    
-                    step_lim = int(max_crop_step_base * (1.5 + max(0.0, current_zoom_level - 1.0) * 1.2))
-                    
-                    if abs(x1 - pcx1) > step_lim:
-                        x1 = pcx1 + step_lim if x1 > pcx1 else pcx1 - step_lim
-                        x2 = x1 + (pcx2 - pcx1)
-                    if abs(y1 - pcy1) > step_lim:
-                        y1 = pcy1 + step_lim if y1 > pcy1 else pcy1 - step_lim
-                        y2 = y1 + (pcy2 - pcy1)
+                # REMOVED: Secondary smoothing filter (conflicted with OneEuroFilter)
+                # The OneEuroFilter inside VirtualCamera already handles all smoothing
                 
                 strict_margin = 5
                 if x1 < strict_margin: 
