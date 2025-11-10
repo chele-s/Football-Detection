@@ -16,5 +16,5 @@ camera:
   anticipation: 0.35
   zoom_padding: 1.2
   smoothing_freq: 30.0
-  smoothing_min_cutoff: 1.5
-  smoothing_beta: 0.002
+  smoothing_min_cutoff: 2.5
+  smoothing_beta: 0.001

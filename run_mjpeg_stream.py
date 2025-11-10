@@ -123,8 +123,8 @@ def main():
         anticipation_factor=0.35,
         zoom_padding=camera_config.get('zoom_padding', 1.2),
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.5),
-        smoothing_beta=camera_config.get('smoothing_beta', 0.002),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 2.5),
+        smoothing_beta=camera_config.get('smoothing_beta', 0.001),
         use_pid=True,
         prediction_steps=5
     )
@@ -152,6 +152,14 @@ def main():
     frames_tracking = 0
     frames_required_for_zoom = 4
     lost_search_center = None  # Gradual expansion center when lost
+    
+    # Loop detection and recovery
+    last_tracking_state = False
+    tracking_state_changes = []
+    loop_detection_window = 30  # frames
+    loop_threshold = 5  # changes in window
+    consecutive_det_frames = 0  # consecutive frames with detection
+    target_zoom_before_loss = 1.0
 
     zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level, stiffness=0.060, damping=0.60, max_rate=0.11, max_rate_in=0.14, max_rate_out=0.10, accel_limit=0.05)
     diag = int(math.hypot(reader.width, reader.height))
@@ -337,6 +345,36 @@ def main():
                 print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
             elif track_result:
                 x, y, is_tracking = track_result
+                
+                # Detect tracking/lost loops
+                if is_tracking != last_tracking_state:
+                    tracking_state_changes.append(frame_count)
+                    # Keep only recent changes
+                    tracking_state_changes = [f for f in tracking_state_changes if frame_count - f < loop_detection_window]
+                    
+                    # If too many state changes = unstable loop
+                    if len(tracking_state_changes) >= loop_threshold:
+                        print(f"⚠ LOOP DETECTED - Resetting to center")
+                        # Reset to center with zoom out
+                        center_x = reader.width // 2
+                        center_y = reader.height // 2
+                        virtual_camera.reset()
+                        crop_coords = virtual_camera.update(center_x, center_y, time.time(), velocity_hint=(0, 0))
+                        roi_active = False
+                        roi_stable_frames = 0
+                        roi_fail_count = 0
+                        lost_search_center = None
+                        target_zoom_level = 1.0
+                        tracking_state_changes.clear()
+                        consecutive_det_frames = 0
+                last_tracking_state = is_tracking
+                
+                # Track consecutive detection frames
+                if det_ok and ball_detection:
+                    consecutive_det_frames += 1
+                else:
+                    consecutive_det_frames = 0
+                
                 if not is_tracking:
                     # Freeze camera during search to avoid jitter from predictions
                     if roi_active:
@@ -436,7 +474,13 @@ def main():
                         vhx, vhy = dvx, dvy
                     else:
                         vhx, vhy = tracker.get_velocity()
-                    crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
+                    # Use ACTUAL detection position, not smoothed tracker position
+                    # This ensures camera locks onto real ball, not lagged Kalman estimate
+                    if ball_detection:
+                        bx, by = ball_detection[0], ball_detection[1]
+                        crop_coords = virtual_camera.update(bx, by, time.time(), velocity_hint=(vhx, vhy))
+                    else:
+                        crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
                 else:
                     # Freeze camera when predicting or lost - prevents jitter
                     crop_coords = virtual_camera.get_current_crop()
@@ -506,19 +550,28 @@ def main():
                             det_zoom = 1.55
                         else:
                             det_zoom = 1.35
-                    if det_zoom is not None:
-                        target_zoom_level = min(max_zoom_level, det_zoom)
+                    # Gradual zoom out if detections are very short (<3 frames)
+                    # Keep ROI active but reduce zoom to find ball easier
+                    if roi_active and consecutive_det_frames < 3:
+                        # Gradual zoom out while maintaining ROI
+                        target_zoom_before_loss = max(1.0, target_zoom_before_loss * 0.97)
+                        target_zoom_level = target_zoom_before_loss
+                        zoom_lock_count = max(zoom_lock_count - 2, 0)  # Faster unlock
                     else:
-                        if vmag > 950:
-                            target_zoom_level = 1.20
-                        elif vmag > 650:
-                            target_zoom_level = 1.35
-                        elif vmag > 380:
-                            target_zoom_level = 1.50
+                        if det_zoom is not None:
+                            target_zoom_level = min(max_zoom_level, det_zoom)
                         else:
-                            target_zoom_level = 1.65
-                    zoom_lock_count = zoom_lock_max
-                    hold_zoom_level = target_zoom_level
+                            if vmag > 950:
+                                target_zoom_level = 1.20
+                            elif vmag > 650:
+                                target_zoom_level = 1.35
+                            elif vmag > 380:
+                                target_zoom_level = 1.50
+                            else:
+                                target_zoom_level = 1.65
+                        zoom_lock_count = zoom_lock_max
+                        hold_zoom_level = target_zoom_level
+                        target_zoom_before_loss = target_zoom_level
                 else:
                     if not is_tracking:
                         zoom_lock_count = 0
