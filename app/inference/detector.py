@@ -149,8 +149,8 @@ class BallDetector:
             elif frame.shape[2] == 4:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
             elif frame.shape[2] == 3:
-                # Fast BGR to RGB using slice (zero-copy view)
-                frame_rgb = frame[:, :, ::-1]
+                # BGR to RGB using cv2 (faster than [::-1].copy())
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = frame_rgb
         else:
             # Already PIL or other format
