@@ -1,5 +1,5 @@
 model:
-  path: "models/checkpoint_best_total.pth"
+  path: "models/checkpoint_best_total_480_rfdetr.onnx"  # ONNX model for 1.5-2x speedup
   confidence: 0.12
   iou_threshold: 0.45
   device: "cuda"
