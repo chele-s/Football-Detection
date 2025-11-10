@@ -205,11 +205,6 @@ class StreamPipeline:
         prev_zoom_center = None
         prev_crop = None
         max_crop_step_base = max(4, int(diag * 0.008))
-        reacq_points = []
-        area_min = max(64, int(0.00002 * reader.width * reader.height))
-        area_max = int(0.030 * reader.width * reader.height)
-        det_consist = 0
-        det_consist_need = 4
         roi_active = False
         roi_stable_frames = 0
         roi_ready_frames = 35
@@ -370,46 +365,21 @@ class StreamPipeline:
                         last_stable = (x, y)
                     if anchor is None:
                         anchor = (x, y)
+                    
+                    # TRUST THE TRACKER: Use Kalman-smoothed coordinates directly
+                    # The tracker already handles gating, outlier rejection, and smoothing
                     use_x, use_y = x, y
-                    det_ok = False
+                    
+                    # Update detection history for other metrics (bloom, etc)
                     if ball_detection:
                         bx, by, bw, bh, bconf = ball_detection
-                        step_ok = True
-                        if last_det is not None:
-                            dx_det = bx - last_det[0]
-                            dy_det = by - last_det[1]
-                            step_det = math.hypot(dx_det, dy_det)
-                            step_ok = step_det <= close_thresh * 1.3
-                        aspect = (bw / bh) if bh > 0 else 1.0
-                        area = bw * bh
-                        det_raw_ok = (bconf >= 0.24) and step_ok and (0.65 <= aspect <= 1.45) and (area >= area_min and area <= area_max)
-                        if det_raw_ok:
-                            det_consist += 1
-                        else:
-                            det_consist = max(det_consist - 1, 0)
+                        # Update far reacquire tracking for zoom management
                         far_thresh = max(int(diag * 0.22), 180)
                         d_far = math.hypot(bx - (anchor[0] if anchor else bx), by - (anchor[1] if anchor else by))
                         if d_far > far_thresh:
                             far_reacquire_count += 1
                         else:
                             far_reacquire_count = max(far_reacquire_count - 1, 0)
-                        if det_raw_ok:
-                            reacq_points.append((bx, by))
-                            if len(reacq_points) > 10:
-                                reacq_points.pop(0)
-                        cluster_ok = True
-                        if (not is_tracking) and (far_reacquire_count < far_reacquire_need) and len(reacq_points) >= 4:
-                            mx = sum(p[0] for p in reacq_points) / len(reacq_points)
-                            my = sum(p[1] for p in reacq_points) / len(reacq_points)
-                            dists = [math.hypot(p[0]-mx, p[1]-my) for p in reacq_points]
-                            count_in = sum(1 for d in dists if d <= close_thresh * 1.2)
-                            cluster_ok = count_in >= 3
-                        consist_need = det_consist_need + 1 if not is_tracking else det_consist_need
-                        det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need) and cluster_ok
-                        if det_ok:
-                            x, y = bx, by
-                            is_tracking = True
-                            reacq_points.clear()
                     if is_tracking and kalman_ok and cooldown == 0:
                         d = math.hypot(x - last_stable[0], y - last_stable[1])
                         if d > jump_reset_px:
