@@ -120,11 +120,11 @@ def main():
         output_width=base_output_width,
         output_height=base_output_height,
         dead_zone_percent=0.10,
-        anticipation_factor=0.4,
+        anticipation_factor=0.35,
         zoom_padding=camera_config.get('zoom_padding', 1.2),
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 0.6),
-        smoothing_beta=camera_config.get('smoothing_beta', 0.004),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 1.5),
+        smoothing_beta=camera_config.get('smoothing_beta', 0.002),
         use_pid=True,
         prediction_steps=5
     )
@@ -161,7 +161,7 @@ def main():
     last_stable = None
     stability_score = 0.0
     anchor = None
-    max_pan_step = max(10, int(diag * 0.018))
+    max_pan_step = max(8, int(diag * 0.012))
     anchor_ready_px = max(28, int(diag * 0.055))
     zoom_lock_count = 0
     zoom_lock_max = 36
@@ -264,21 +264,23 @@ def main():
                         roi_active = False
                         roi_fail_count = 0
             
-            # DEBUG: Log detection before tracker
+            # Spatial filter: exclude upper region (stands/lights)
+            # Only reject detections in the TOP 25% of frame where stands/lights are
             if ball_detection is not None:
                 bx, by, bw, bh, bconf = ball_detection
-                print(f"[DEBUG] Detection before tracker: pos=({bx:.1f},{by:.1f}) conf={bconf:.2f}")
-            else:
-                print(f"[DEBUG] No detection to pass to tracker")
+                if by < reader.height * 0.25:
+                    ball_detection = None
+            
+            # Filter all_detections as well
+            if all_detections:
+                filtered_dets = []
+                for d in all_detections:
+                    dx, dy = d[0], d[1]
+                    if dy >= reader.height * 0.25:
+                        filtered_dets.append(d)
+                all_detections = filtered_dets if filtered_dets else None
             
             track_result = tracker.update(ball_detection, all_detections)
-            
-            # DEBUG: Log tracker result
-            if track_result:
-                tx, ty, t_tracking = track_result
-                print(f"[DEBUG] Tracker result: pos=({tx:.1f},{ty:.1f}) tracking={t_tracking}")
-            else:
-                print(f"[DEBUG] Tracker returned None")
             
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
