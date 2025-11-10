@@ -229,7 +229,7 @@ class StreamPipeline:
                     break
                 
                 do_inference = True
-                if frames_tracking >= 8 and stability_score >= 0.60 and cooldown == 0:
+                if frames_tracking >= 8:
                     if det_skip > 0:
                         det_skip -= 1
                         do_inference = False
@@ -348,8 +348,6 @@ class StreamPipeline:
                 if not camera_initialized and track_result:
                     x, y, is_tracking = track_result
                     self.virtual_camera.reset()
-                    last_stable = (x, y)
-                    anchor = (x, y)
                     crop_coords = self.virtual_camera.update(x, y, time.time(), velocity_hint=self.tracker.get_velocity())
                     camera_initialized = True
                 elif track_result:
@@ -361,10 +359,7 @@ class StreamPipeline:
                     state = self.tracker.get_state()
                     vmag = state['velocity_magnitude'] if state else 0.0
                     kalman_ok = state['kalman_stable'] if state else True
-                    if last_stable is None:
-                        last_stable = (x, y)
-                    if anchor is None:
-                        anchor = (x, y)
+                    
                     
                     # TRUST THE TRACKER: Use Kalman-smoothed coordinates directly
                     # The tracker already handles gating, outlier rejection, and smoothing
@@ -375,49 +370,15 @@ class StreamPipeline:
                         bx, by, bw, bh, bconf = ball_detection
                         # Update far reacquire tracking for zoom management
                         far_thresh = max(int(diag * 0.22), 180)
-                        d_far = math.hypot(bx - (anchor[0] if anchor else bx), by - (anchor[1] if anchor else by))
+                        d_far = math.hypot(bx - x, by - y)
                         if d_far > far_thresh:
                             far_reacquire_count += 1
                         else:
                             far_reacquire_count = max(far_reacquire_count - 1, 0)
-                    if is_tracking and kalman_ok and cooldown == 0:
-                        d = math.hypot(x - last_stable[0], y - last_stable[1])
-                        if d > jump_reset_px:
-                            cooldown = cooldown_max
-                            frames_tracking = 0
-                            stability_score = max(stability_score - 0.2, 0.0)
-                            use_x, use_y = last_stable
-                        else:
-                            if d <= stable_step_px:
-                                frames_tracking += 1
-                                stability_score = min(stability_score + 0.12, 1.0)
-                                a = 0.18
-                                last_stable = (last_stable[0] * (1 - a) + x * a, last_stable[1] * (1 - a) + y * a)
-                            else:
-                                frames_tracking = max(frames_tracking - 1, 0)
-                                stability_score = max(stability_score - 0.10, 0.0)
+                    if is_tracking:
+                        frames_tracking += 1
                     else:
-                        if cooldown > 0:
-                            cooldown -= 1
-                            use_x, use_y = last_stable if last_stable else (x, y)
-                        if not is_tracking:
-                            frames_tracking = max(frames_tracking - 1, 0)
-                            stability_score = max(stability_score - 0.05, 0.0)
-                    if anchor is not None and is_tracking:
-                        dx = use_x - anchor[0]
-                        dy = use_y - anchor[1]
-                        dist = math.hypot(dx, dy)
-                        cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 1.5 + min(vmag / 450.0, 0.8)))
-                        if dist > cur_step and dist > 1e-6:
-                            r = cur_step / dist
-                            anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
-                        else:
-                            # Reduced alpha for smoother anchor movement
-                            a_anch = 0.04 + 0.08 * max(0.0, current_zoom_level - 1.0)
-                            if a_anch > 0.18:
-                                a_anch = 0.18
-                            anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
-                        use_x, use_y = anchor
+                        frames_tracking = max(frames_tracking - 1, 0)
                     if ball_detection:
                         last_det = (ball_detection[0], ball_detection[1])
                     if last_raw is not None:
@@ -478,7 +439,7 @@ class StreamPipeline:
                             close_counter += 1
                         else:
                             close_counter = max(close_counter - 1, 0)
-                    zoom_gate_ok = (det_ok) or (is_tracking and cooldown == 0 and (stability_score >= 0.40 or frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2))
+                    zoom_gate_ok = is_tracking and (frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2)
                     if zoom_gate_ok:
                         if vmag > 950:
                             target_zoom_level = 1.20
@@ -490,7 +451,7 @@ class StreamPipeline:
                             target_zoom_level = 1.65
                         zoom_lock_count = zoom_lock_max
                         hold_zoom_level = target_zoom_level
-                        if det_ok:
+                        if is_tracking:
                             roi_stable_frames += 1
                         else:
                             roi_stable_frames = max(roi_stable_frames - 1, 0)
@@ -540,14 +501,8 @@ class StreamPipeline:
                 current_zoom_level = zoom.update()
                 x1, y1, x2, y2 = crop_coords
                 if track_result:
-                    if last_raw is not None and anchor is not None:
-                        follow_cx, follow_cy = anchor[0], anchor[1]
-                        wz = 0.70
-                        zoom_cx = int(wz*last_raw[0] + (1.0-wz)*follow_cx)
-                        zoom_cy = int(wz*last_raw[1] + (1.0-wz)*follow_cy)
-                    else:
-                        zoom_cx = int(0.8*x + 0.2*(anchor[0] if anchor else x))
-                        zoom_cy = int(0.8*y + 0.2*(anchor[1] if anchor else y))
+                    zoom_cx = int(x)
+                    zoom_cy = int(y)
                 else:
                     zoom_cx = (x1 + x2) // 2
                     zoom_cy = (y1 + y2) // 2

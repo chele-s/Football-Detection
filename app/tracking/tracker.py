@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExtendedKalmanFilter:
-    def __init__(self, dt: float = 1/30, process_noise: float = 0.01, measurement_noise: float = 1.0):
+    def __init__(self, dt: float = 1/30, process_noise: float = 0.01, measurement_noise: float = 20.0):
         self.dt = dt
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
@@ -122,7 +122,7 @@ class BallTracker:
         self.iou_threshold = iou_threshold
         self.adaptive_noise = adaptive_noise
         
-        self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=1.0)
+        self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=20.0)
         self.lost_frames = 0
         self.track_id = 0
         self.is_tracking = False
