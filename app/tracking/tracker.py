@@ -159,9 +159,10 @@ class BallTracker:
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             
-            if confidence < self.min_confidence:
-                logger.debug(f"Detection rejected: confidence {confidence:.2f} < {self.min_confidence}")
-                detection = None
+            # Temporarily disable min_confidence gate for debugging
+            # if confidence < self.min_confidence:
+            #     logger.debug(f"Detection rejected: confidence {confidence:.2f} < {self.min_confidence}")
+            #     detection = None
         
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
@@ -180,6 +181,7 @@ class BallTracker:
                 self.stats['successful_tracks'] += 1
                 return (x_center, y_center, True)
             
+            # Apply strict gating ONLY when already tracking
             if self.is_tracking and self.last_bbox is not None:
                 iou = self._compute_iou(bbox, self.last_bbox)
                 if iou < self.iou_threshold:
@@ -188,24 +190,19 @@ class BallTracker:
                     if self._is_outlier(x_center, y_center):
                         self.stats['outliers_rejected'] += 1
                         detection = None
-            
-            if detection is not None:
-                # Gating: distance from current estimate (velocity-aware)
-                vx_est, vy_est = self.get_velocity()
-                vmag = float(np.sqrt(vx_est**2 + vy_est**2))
-                if self.kalman.initialized:
-                    if self.is_tracking:
-                        allowed_distance = max(120.0, min(900.0, 3.5 * vmag + 220.0))
-                    else:
-                        allowed_distance = 2500.0
+                
+                if detection is not None:
+                    # Gating: distance from current estimate (velocity-aware)
+                    vx_est, vy_est = self.get_velocity()
+                    vmag = float(np.sqrt(vx_est**2 + vy_est**2))
+                    allowed_distance = max(120.0, min(900.0, 3.5 * vmag + 220.0))
                     dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
                     if dist_curr > allowed_distance:
                         self.stats['outliers_rejected'] += 1
                         detection = None
-                
-            if detection is not None:
-                # Mahalanobis gating before applying update
-                if self.kalman.initialized:
+                    
+                if detection is not None:
+                    # Mahalanobis gating before applying update
                     H = self.kalman.H
                     P = self.kalman.P
                     R = self.kalman.R
@@ -220,7 +217,7 @@ class BallTracker:
                         S += np.eye(2) * 1e-4
                         S_inv = np.linalg.inv(S)
                     maha = float(y.T @ S_inv @ y)
-                    gate_thr = 25.0 if not self.is_tracking else 11.83
+                    gate_thr = 11.83
                     if maha > gate_thr:
                         self.stats['outliers_rejected'] += 1
                         detection = None

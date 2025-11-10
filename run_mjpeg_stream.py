@@ -182,8 +182,6 @@ def main():
     reacq_points = []
     area_min = max(64, int(0.00002 * reader.width * reader.height))
     area_max = int(0.030 * reader.width * reader.height)
-    det_consist = 0
-    det_consist_need = 4
     center_lp = None
     zoom_target_lp = 1.0
     roi_active = False
@@ -266,23 +264,21 @@ def main():
                         roi_active = False
                         roi_fail_count = 0
             
-            # Spatial filter: exclude upper region (stands/lights)
+            # DEBUG: Log detection before tracker
             if ball_detection is not None:
                 bx, by, bw, bh, bconf = ball_detection
-                # Reject detections in upper 35% of frame (stands/lights area)
-                if by < reader.height * 0.35:
-                    ball_detection = None
-            
-            # Filter all_detections as well
-            if all_detections:
-                filtered_dets = []
-                for d in all_detections:
-                    dx, dy = d[0], d[1]
-                    if dy >= reader.height * 0.35:
-                        filtered_dets.append(d)
-                all_detections = filtered_dets if filtered_dets else None
+                print(f"[DEBUG] Detection before tracker: pos=({bx:.1f},{by:.1f}) conf={bconf:.2f}")
+            else:
+                print(f"[DEBUG] No detection to pass to tracker")
             
             track_result = tracker.update(ball_detection, all_detections)
+            
+            # DEBUG: Log tracker result
+            if track_result:
+                tx, ty, t_tracking = track_result
+                print(f"[DEBUG] Tracker result: pos=({tx:.1f},{ty:.1f}) tracking={t_tracking}")
+            else:
+                print(f"[DEBUG] Tracker returned None")
             
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
@@ -298,6 +294,12 @@ def main():
                     # Freeze camera during search to avoid jitter from predictions
                     roi_active = False
                     roi_fail_count = 0
+                else:
+                    # Tracker is confident - activate ROI after a few frames
+                    roi_stable_frames += 1
+                    if (not roi_active) and roi_stable_frames >= roi_ready_frames:
+                        roi_active = True
+                        roi_fail_count = 0
                 state = tracker.get_state()
                 vmag = state['velocity_magnitude'] if state else 0.0
                 kalman_ok = state['kalman_stable'] if state else True
@@ -306,44 +308,10 @@ def main():
                 if anchor is None:
                     anchor = (x, y)
                 use_x, use_y = x, y
-                det_ok = False
+                # Update last_det for visual overlay
                 if ball_detection:
                     bx, by, bw, bh, bconf = ball_detection
-                    step_ok = True
-                    if last_det is not None:
-                        dx_det = bx - last_det[0]
-                        dy_det = by - last_det[1]
-                        step_det = math.hypot(dx_det, dy_det)
-                        step_ok = step_det <= close_thresh * 1.3
-                    aspect = (bw / bh) if bh > 0 else 1.0
-                    area = bw * bh
-                    det_raw_ok = (bconf >= 0.18) and step_ok and (0.60 <= aspect <= 1.50) and (area >= area_min and area <= area_max)
-                    if det_raw_ok:
-                        det_consist += 1
-                    else:
-                        det_consist = max(det_consist - 1, 0)
-                    far_thresh = max(int(diag * 0.22), 180)
-                    d_far = math.hypot(bx - (anchor[0] if anchor else bx), by - (anchor[1] if anchor else by))
-                    if d_far > far_thresh:
-                        far_reacquire_count += 1
-                    else:
-                        far_reacquire_count = max(far_reacquire_count - 1, 0)
-                    if last_stable is None:
-                        det_ok = det_raw_ok
-                    else:
-                        consist_need = det_consist_need
-                        det_ok = det_raw_ok and det_consist >= consist_need and (d_far <= far_thresh or far_reacquire_count >= far_reacquire_need)
-                    if det_ok:
-                        x, y = bx, by
-                        is_tracking = True
-                        reacq_points.clear()
-                    if det_ok:
-                        roi_stable_frames += 1
-                    else:
-                        roi_stable_frames = max(roi_stable_frames - 1, 0)
-                    if (not roi_active) and roi_stable_frames >= roi_ready_frames:
-                        roi_active = True
-                        roi_fail_count = 0
+                    last_det = (bx, by)
 
                 if is_tracking and kalman_ok and cooldown == 0:
                     d = math.hypot(x - last_stable[0], y - last_stable[1])

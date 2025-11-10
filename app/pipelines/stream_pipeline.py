@@ -282,22 +282,6 @@ class StreamPipeline:
                         roi_active = False
                         roi_fail_count = 0
                 
-                # Spatial filter: exclude upper region (stands/lights)
-                if detection is not None:
-                    bx, by, bw, bh, bconf = detection
-                    # Reject detections in upper 35% of frame (stands/lights area)
-                    if by < reader.height * 0.35:
-                        detection = None
-                
-                # Filter detections_list as well
-                if detections_list:
-                    filtered_dets = []
-                    for d in detections_list:
-                        dx, dy = d[0], d[1]
-                        if dy >= reader.height * 0.35:
-                            filtered_dets.append(d)
-                    detections_list = filtered_dets if filtered_dets else None
-                
                 t_tracking_start = time.time()
                 track_result = self.tracker.update(detection, detections_list)
                 t_tracking = (time.time() - t_tracking_start) * 1000
