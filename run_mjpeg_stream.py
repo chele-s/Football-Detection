@@ -229,6 +229,7 @@ def main():
     try:
         while True:
             loop_start = time.time()
+            det_ok = False
             
             ret, frame = reader.read()
             if not ret or frame is None:
