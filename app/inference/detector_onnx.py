@@ -153,9 +153,18 @@ class BallDetectorONNX:
         
         return detections
     
-    def predict_ball_only(self, frame: np.ndarray, **kwargs) -> Optional[Tuple]:
+    def predict_ball_only(self, frame: np.ndarray, ball_class_id: int = 0, roi: Optional[Tuple] = None, **kwargs) -> Optional[Tuple]:
         """Get highest confidence ball detection"""
+        # Note: ROI cropping not implemented in ONNX detector yet
+        # Full frame inference is used for simplicity
         detections = self.predict(frame, **kwargs)
+        
+        if not detections:
+            return None
+        
+        # Filter by class_id if specified
+        if ball_class_id is not None:
+            detections = [d for d in detections if d[5] == ball_class_id]
         
         if not detections:
             return None
