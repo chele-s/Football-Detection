@@ -586,35 +586,7 @@ def main():
                         target_zoom_level = hold_zoom_level
                     else:
                         target_zoom_level = 1.0
-            else:
-                # No tracking - gradually expand search area from last known position
-                lost_count += 1
-                frames_tracking = 0
-                target_zoom_level = 1.0
-                zoom_lock_count = 0
-                hold_zoom_level = 1.0
-                roi_active = False
-                
-                # Gradual expansion: move crop towards frame center over time
-                if lost_search_center is None:
-                    # Start from last known position
-                    current_crop = virtual_camera.get_current_crop()
-                    cx = (current_crop[0] + current_crop[2]) // 2
-                    cy = (current_crop[1] + current_crop[3]) // 2
-                    lost_search_center = (cx, cy)
-                
-                # Gradually move towards frame center for wider search
-                frame_center_x = reader.width // 2
-                frame_center_y = reader.height // 2
-                
-                # Expansion speed based on how long we've been lost
-                expansion_alpha = min(0.15 + (lost_count * 0.005), 0.35)
-                new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + frame_center_x * expansion_alpha)
-                new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + frame_center_y * expansion_alpha)
-                lost_search_center = (new_cx, new_cy)
-                
-                # Update camera to expanded search position
-                crop_coords = virtual_camera.update(new_cx, new_cy, time.time(), velocity_hint=(0, 0))
+            # Removed LOST/SEARCHING state - system stays in PREDICTING/TRACKING only
             
             dz = target_zoom_level - zoom_target_lp
             az_t = 0.28 if abs(dz) > 0.25 else 0.18
@@ -764,12 +736,7 @@ def main():
                     cv2.putText(cropped, f"Ball: {conf:.2f}",
                                (bbox_x - bbox_w//2, bbox_y - bbox_h//2 - 10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            else:
-                center_x = cropped.shape[1] // 2
-                center_y = cropped.shape[0] // 2
-                cv2.putText(cropped, "SEARCHING...",
-                           (center_x - 100, center_y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+            # Removed SEARCHING text - system never enters LOST state
 
             if (not track_result) and ball_detection:
                 bx, by, bw, bh, conf = ball_detection
