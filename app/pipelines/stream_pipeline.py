@@ -202,7 +202,7 @@ class StreamPipeline:
         last_det = None
         prev_zoom_center = None
         prev_crop = None
-        max_crop_step_base = max(8, int(diag * 0.018))
+        max_crop_step_base = max(4, int(diag * 0.008))
         reacq_points = []
         area_min = max(64, int(0.00002 * reader.width * reader.height))
         area_max = int(0.030 * reader.width * reader.height)
@@ -212,7 +212,8 @@ class StreamPipeline:
         roi_stable_frames = 0
         roi_ready_frames = 35
         roi_fail_count = 0
-        roi_fail_max = 6
+        roi_fail_max = 120  # 4 seconds at 30fps
+        roi_last_valid_pos = None
         bloom_counter = 0
         bloom_max = 12
         far_reacquire_count = 0
@@ -274,13 +275,39 @@ class StreamPipeline:
                         for d in detections_list:
                             mapped.append((d[0] + offx, d[1] + offy, d[2], d[3], d[4], d[5]))
                         detections_list = mapped
-                    if detection is None:
+                    # Check if detection is viable
+                    detection_viable = False
+                    if detection is not None:
+                        bx, by, bw, bh, bconf = detection
+                        # Check for erratic movement
+                        if roi_last_valid_pos is not None:
+                            dx = bx - roi_last_valid_pos[0]
+                            dy = by - roi_last_valid_pos[1]
+                            jump_dist = math.hypot(dx, dy)
+                            # Viable if movement is reasonable (not teleporting)
+                            detection_viable = jump_dist < diag * 0.3
+                        else:
+                            detection_viable = True
+                        
+                        # Check for multiple conflicting detections
+                        if detection_viable and detections_list and len(detections_list) > 3:
+                            # Too many detections = confusion
+                            detection_viable = False
+                        
+                        if detection_viable:
+                            roi_last_valid_pos = (bx, by)
+                    
+                    # Only increment fail count if no viable detection
+                    if not detection_viable:
                         roi_fail_count += 1
                     else:
                         roi_fail_count = 0
+                    
                     if roi_fail_count >= roi_fail_max:
+                        logger.info(f"ROI lost ball for {roi_fail_max} frames - switching to full-frame detection")
                         roi_active = False
                         roi_fail_count = 0
+                        roi_last_valid_pos = None
                 
                 # Spatial filter: exclude upper region (stands/lights)
                 # Only reject detections in the TOP 25% of frame where stands/lights are
@@ -317,6 +344,7 @@ class StreamPipeline:
                     if not is_tracking:
                         roi_active = False
                         roi_fail_count = 0
+                        roi_last_valid_pos = None
                     state = self.tracker.get_state()
                     vmag = state['velocity_magnitude'] if state else 0.0
                     kalman_ok = state['kalman_stable'] if state else True
@@ -421,9 +449,12 @@ class StreamPipeline:
                             bloom_counter = bloom_max
                     last_raw = (x, y)
                     vhx, vhy = self.tracker.get_velocity()
-                    if is_tracking:
+                    # CRITICAL: Only update camera when we have REAL detection, not predictions
+                    # This prevents jitter from Kalman predictions
+                    if is_tracking and ball_detection is not None:
                         crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
                     else:
+                        # Freeze camera when predicting or lost - prevents jitter
                         crop_coords = self.virtual_camera.get_current_crop()
                     detection_count += 1
                     lost_count = 0
@@ -462,6 +493,7 @@ class StreamPipeline:
                         if (not roi_active) and roi_stable_frames >= roi_ready_frames:
                             roi_active = True
                             roi_fail_count = 0
+                            roi_last_valid_pos = None  # Reset on ROI activation
                     else:
                         if not is_tracking:
                             zoom_lock_count = 0
@@ -546,9 +578,19 @@ class StreamPipeline:
                             y1 = max(0, min(reader.height - zoomed_height, y1 + s))
                             y2 = y1 + zoomed_height
                 x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
+                
+                # CRITICAL: Heavy smoothing on crop coordinates to eliminate jitter
                 if prev_crop is not None:
                     pcx1, pcy1, pcx2, pcy2 = prev_crop
-                    step_lim = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 1.5))
+                    # Exponential smoothing with very low alpha (0.15 = keep 85% of previous crop)
+                    alpha_crop = 0.15
+                    x1 = int(pcx1 * (1.0 - alpha_crop) + x1 * alpha_crop)
+                    y1 = int(pcy1 * (1.0 - alpha_crop) + y1 * alpha_crop)
+                    x2 = int(pcx2 * (1.0 - alpha_crop) + x2 * alpha_crop)
+                    y2 = int(pcy2 * (1.0 - alpha_crop) + y2 * alpha_crop)
+                    
+                    # Additional step limiter as backup
+                    step_lim = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 0.8))
                     if abs(x1 - pcx1) > step_lim:
                         x1 = pcx1 + step_lim if x1 > pcx1 else pcx1 - step_lim
                         x2 = x1 + (pcx2 - pcx1)
