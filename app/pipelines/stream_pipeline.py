@@ -462,22 +462,15 @@ class StreamPipeline:
                         else:
                             natural_counter = max(natural_counter - 1, 0)
                         last_vec = (0.8*lvx + 0.2*dxn, 0.8*lvy + 0.2*dyn)
-                        if cosd <= -0.4 and step > close_thresh*0.8:
-                            bloom_counter = bloom_max
+                        if is_tracking and ball_detection is not None and cosd <= -0.3 and step > close_thresh*1.2:
+                            bloom_counter = min(bloom_max // 2, 6)
                     last_raw = (x, y)
                     vhx, vhy = self.tracker.get_velocity()
                     
-                    # Reset lost search center when we have tracking again
                     if is_tracking:
                         lost_search_center = None
                     
-                    # CRITICAL: Only update camera when we have REAL detection, not predictions
-                    # This prevents jitter from Kalman predictions
-                    if is_tracking and ball_detection is not None:
-                        crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
-                    else:
-                        # Freeze camera when predicting or lost - prevents jitter
-                        crop_coords = self.virtual_camera.get_current_crop()
+                    crop_coords = self.virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
                     detection_count += 1
                     lost_count = 0
                     recent_positions.append((x, y))
@@ -528,33 +521,28 @@ class StreamPipeline:
                         else:
                             target_zoom_level = 1.0
                 else:
-                    # No tracking - gradually expand search area from last known position
                     lost_count += 1
                     frames_tracking = 0
                     target_zoom_level = 1.0
                     zoom_lock_count = 0
                     hold_zoom_level = 1.0
                     roi_active = False
+                    roi_stable_frames = 0
                     
-                    # Gradual expansion: move crop towards frame center over time
                     if lost_search_center is None:
-                        # Start from last known position
                         current_crop = self.virtual_camera.get_current_crop()
                         cx = (current_crop[0] + current_crop[2]) // 2
                         cy = (current_crop[1] + current_crop[3]) // 2
                         lost_search_center = (cx, cy)
                     
-                    # Gradually move towards frame center for wider search
-                    frame_center_x = reader.width // 2
-                    frame_center_y = reader.height // 2
+                    search_target_x = int(reader.width * 0.50)
+                    search_target_y = int(reader.height * 0.48)
                     
-                    # Expansion speed based on how long we've been lost
-                    expansion_alpha = min(0.15 + (lost_count * 0.005), 0.35)
-                    new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + frame_center_x * expansion_alpha)
-                    new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + frame_center_y * expansion_alpha)
+                    expansion_alpha = min(0.08 + (lost_count * 0.003), 0.20)
+                    new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + search_target_x * expansion_alpha)
+                    new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + search_target_y * expansion_alpha)
                     lost_search_center = (new_cx, new_cy)
                     
-                    # Update camera to expanded search position
                     crop_coords = self.virtual_camera.update(new_cx, new_cy, time.time(), velocity_hint=(0, 0))
                 zoom.set_target(target_zoom_level)
                 current_zoom_level = zoom.update()
@@ -622,35 +610,28 @@ class StreamPipeline:
                             y2 = y1 + zoomed_height
                 x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
                 
-                # CRITICAL: Heavy smoothing on crop coordinates to eliminate jitter
                 if prev_crop is not None:
                     pcx1, pcy1, pcx2, pcy2 = prev_crop
-                    # Exponential smoothing - EXTRA heavy on Y axis when predicting
-                    # When predicting (ball_detection=None), nearly freeze vertical movement
-                    if ball_detection is not None:
-                        # Has real detection - moderate smoothing
-                        alpha_x = 0.12
-                        alpha_y = 0.10
+                    
+                    if track_result and is_tracking:
+                        alpha_x = 0.14
+                        alpha_y = 0.12
                     else:
-                        # Predicting - MUCH heavier smoothing, especially vertical
-                        alpha_x = 0.08
-                        alpha_y = 0.03  # 97% keep previous Y position - nearly frozen
+                        alpha_x = 0.10
+                        alpha_y = 0.08
                     
                     x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
                     y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
                     x2 = int(pcx2 * (1.0 - alpha_x) + x2 * alpha_x)
                     y2 = int(pcy2 * (1.0 - alpha_y) + y2 * alpha_y)
                     
-                    # Additional step limiter as backup
-                    step_lim_x = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 0.8))
-                    # Y axis - MUCH stricter limit when predicting to prevent vertical drift
-                    step_lim_y = int(step_lim_x * 0.5) if ball_detection is None else step_lim_x
+                    step_lim = int(max_crop_step_base * (1.5 + max(0.0, current_zoom_level - 1.0) * 1.2))
                     
-                    if abs(x1 - pcx1) > step_lim_x:
-                        x1 = pcx1 + step_lim_x if x1 > pcx1 else pcx1 - step_lim_x
+                    if abs(x1 - pcx1) > step_lim:
+                        x1 = pcx1 + step_lim if x1 > pcx1 else pcx1 - step_lim
                         x2 = x1 + (pcx2 - pcx1)
-                    if abs(y1 - pcy1) > step_lim_y:
-                        y1 = pcy1 + step_lim_y if y1 > pcy1 else pcy1 - step_lim_y
+                    if abs(y1 - pcy1) > step_lim:
+                        y1 = pcy1 + step_lim if y1 > pcy1 else pcy1 - step_lim
                         y2 = y1 + (pcy2 - pcy1)
                 if x1 < 0: x1 = 0
                 if y1 < 0: y1 = 0
@@ -671,11 +652,13 @@ class StreamPipeline:
                         (self.config['output']['width'], self.config['output']['height'])
                     )
                 
-                if bloom_counter > 0:
-                    intensity = bloom_counter / bloom_max
-                    blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=6, sigmaY=6)
-                    cropped = cv2.addWeighted(cropped, 1.0, blurred, 0.35*intensity, 0)
+                if bloom_counter > 0 and track_result and is_tracking:
+                    intensity = bloom_counter / max(bloom_max, 1)
+                    blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=4, sigmaY=4)
+                    cropped = cv2.addWeighted(cropped, 1.0, blurred, 0.12*intensity, 0)
                     bloom_counter -= 1
+                elif not (track_result and is_tracking):
+                    bloom_counter = 0
                 
                 if self.show_stats:
                     current_fps = 1.0 / (time.time() - loop_start) if (time.time() - loop_start) > 0 else 0

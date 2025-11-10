@@ -29,17 +29,21 @@ class PIDController:
         self.last_output = 0.0
     
     def compute(self, error: float, dt: float = 1.0) -> float:
-        self.integral += error * dt
-        self.integral = np.clip(self.integral, -100.0, 100.0)
-        
         derivative = (error - self.last_error) / dt if dt > 0 else 0.0
         
-        output = self.kp * error + self.ki * self.integral + self.kd * derivative
-        output = np.clip(output, *self.output_limits)
+        output_raw = self.kp * error + self.ki * self.integral + self.kd * derivative
+        output = np.clip(output_raw, *self.output_limits)
+        
+        if self.ki > 0:
+            integral_correction = (output - output_raw) / self.ki
+            self.integral += error * dt + integral_correction
+            self.integral = np.clip(self.integral, -50.0, 50.0)
+        else:
+            self.integral += error * dt
+            self.integral = np.clip(self.integral, -50.0, 50.0)
         
         self.last_error = error
         self.last_output = output
-        
         return output
     
     def reset(self):
@@ -66,7 +70,7 @@ class AdaptiveDeadZone:
     
     def should_move(self, distance: float, velocity_magnitude: float) -> bool:
         threshold = self.compute_threshold(velocity_magnitude)
-        return distance > threshold
+        return distance > threshold * 0.7
 
 
 class TrajectoryPredictor:
@@ -338,11 +342,16 @@ class VirtualCamera:
     def get_current_velocity(self) -> Tuple[float, float]:
         return tuple(self.velocity)
     
-    def reset(self):
+    def reset(self, safe_search_position: Optional[Tuple[float, float]] = None):
         logger.info("Resetting Virtual Camera")
-        self.current_center_x = self.frame_width // 2
-        self.current_center_y = self.frame_height // 2
-        self.last_target = np.array([self.frame_width / 2, self.frame_height / 2])
+        if safe_search_position:
+            self.current_center_x = safe_search_position[0]
+            self.current_center_y = safe_search_position[1]
+            self.last_target = np.array([safe_search_position[0], safe_search_position[1]])
+        else:
+            self.current_center_x = int(self.frame_width * 0.5)
+            self.current_center_y = int(self.frame_height * 0.48)
+            self.last_target = np.array([self.frame_width * 0.5, self.frame_height * 0.48])
         self.velocity = np.array([0.0, 0.0])
         self.acceleration = np.array([0.0, 0.0])
         self.position_filter.reset()
