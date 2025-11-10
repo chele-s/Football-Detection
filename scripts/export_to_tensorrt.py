@@ -44,19 +44,36 @@ def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480
         print("⏳ This may take 2-3 minutes and show many TracerWarnings (normal)")
         
         # Use RF-DETR's native export method
-        # This creates "inference_model.onnx" in current directory
+        # This creates "inference_model.onnx" in current directory or "output/" subdirectory
         model.export()
         
-        # Rename to our desired name
-        default_onnx = Path("inference_model.onnx")
-        target_onnx = Path(output_path).name
+        # Check multiple possible locations
+        possible_locations = [
+            Path("inference_model.onnx"),
+            Path("output/inference_model.onnx"),
+            Path("output") / "inference_model.onnx"
+        ]
         
-        if default_onnx.exists():
-            default_onnx.rename(target_onnx)
-            print(f"✓ ONNX export complete: {output_dir / target_onnx}")
-            return str(output_dir / target_onnx)
-        else:
-            raise FileNotFoundError("ONNX export failed - inference_model.onnx not created")
+        default_onnx = None
+        for loc in possible_locations:
+            if loc.exists():
+                default_onnx = loc
+                print(f"✓ Found ONNX at: {loc}")
+                break
+        
+        if default_onnx is None:
+            raise FileNotFoundError(f"ONNX export failed - checked locations: {possible_locations}")
+        
+        # Move to desired location
+        target_onnx = Path(output_path).name
+        target_path = output_dir / target_onnx
+        
+        # Copy instead of rename to handle cross-directory moves
+        import shutil
+        shutil.copy2(default_onnx, target_path)
+        
+        print(f"✓ ONNX export complete: {target_path}")
+        return str(target_path)
             
     finally:
         # Restore original directory
