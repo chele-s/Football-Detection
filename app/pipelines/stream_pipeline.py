@@ -481,8 +481,13 @@ class StreamPipeline:
                     
                     if is_tracking and ball_detection:
                         last_valid_y_tracking = safe_use_y
-                    elif not is_tracking and last_valid_y_tracking is not None:
-                        safe_use_y = min(safe_use_y, last_valid_y_tracking)
+                    elif not is_tracking:
+                        prev_y = self.virtual_camera.current_center_y
+                        min_allowed_y = int(reader.height * 0.35)
+                        if prev_y < min_allowed_y:
+                            safe_use_y = min_allowed_y
+                        else:
+                            safe_use_y = prev_y
                     
                     crop_coords = self.virtual_camera.update(safe_use_x, safe_use_y, time.time(), velocity_hint=(vhx, vhy))
                     detection_count += 1
@@ -550,14 +555,14 @@ class StreamPipeline:
                         lost_search_center = (cx, cy)
                     
                     search_target_x = int(reader.width * 0.50)
-                    search_target_y = int(reader.height * 0.42)
+                    search_target_y = int(reader.height * 0.38)
                     
-                    expansion_alpha = min(0.05 + (lost_count * 0.002), 0.12)
+                    expansion_alpha = min(0.03 + (lost_count * 0.001), 0.08)
                     new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + search_target_x * expansion_alpha)
                     new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + search_target_y * expansion_alpha)
                     
-                    safe_margin_y = int(self.virtual_camera.effective_height * 0.6)
-                    new_cy = max(safe_margin_y, min(new_cy, reader.height - safe_margin_y))
+                    min_allowed_y = int(reader.height * 0.35)
+                    new_cy = max(min_allowed_y, new_cy)
                     
                     lost_search_center = (new_cx, new_cy)
                     crop_coords = self.virtual_camera.update(new_cx, new_cy, time.time(), velocity_hint=(0, 0))
