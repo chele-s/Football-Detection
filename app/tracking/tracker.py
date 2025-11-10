@@ -166,6 +166,19 @@ class BallTracker:
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             bbox = (x_center, y_center, width, height)
+            # Immediate init/lock on first valid detection
+            if not self.kalman.initialized:
+                _ = self.kalman.correct(x_center, y_center)
+                vx, vy = self.kalman.get_velocity()
+                self.velocity_history.append((vx, vy))
+                self.lost_frames = 0
+                self.is_tracking = True
+                self.last_detection = detection
+                self.last_bbox = bbox
+                self.position_history.append((x_center, y_center))
+                self.confidence_history.append(confidence)
+                self.stats['successful_tracks'] += 1
+                return (x_center, y_center, True)
             
             if self.is_tracking and self.last_bbox is not None:
                 iou = self._compute_iou(bbox, self.last_bbox)
