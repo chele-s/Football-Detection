@@ -15,15 +15,12 @@ from app.utils import VideoReader, FFMPEGWriter, RTMPClient
 logger = logging.getLogger(__name__)
 
 class SmoothZoom:
-    def __init__(self, min_zoom: float = 1.0, max_zoom: float = 2.5, stiffness: float = 0.06, damping: float = 0.60, max_rate: float = 0.11, max_rate_in: float = 0.14, max_rate_out: float = 0.10, accel_limit: float = 0.05):
+    def __init__(self, min_zoom: float = 1.0, max_zoom: float = 2.5, stiffness: float = 0.08, damping: float = 0.70, max_rate: float = 0.08):
         self.min_zoom = min_zoom
         self.max_zoom = max_zoom
         self.k = stiffness
         self.c = damping
         self.max_rate = max_rate
-        self.max_rate_in = max_rate_in
-        self.max_rate_out = max_rate_out
-        self.accel_limit = accel_limit
         self.z = min_zoom
         self.v = 0.0
         self.target = min_zoom
@@ -32,24 +29,11 @@ class SmoothZoom:
     def update(self) -> float:
         e = self.target - self.z
         a = self.k * e - self.c * self.v
-        if self.accel_limit is not None:
-            if a > self.accel_limit:
-                a = self.accel_limit
-            elif a < -self.accel_limit:
-                a = -self.accel_limit
         self.v += a
-        if e >= 0:
-            mr = self.max_rate_in if self.max_rate_in is not None else self.max_rate
-            if self.v > mr:
-                self.v = mr
-            if self.v < -mr:
-                self.v = -mr
-        else:
-            mr = self.max_rate_out if self.max_rate_out is not None else self.max_rate
-            if self.v > mr:
-                self.v = mr
-            if self.v < -mr:
-                self.v = -mr
+        if self.v > self.max_rate:
+            self.v = self.max_rate
+        elif self.v < -self.max_rate:
+            self.v = -self.max_rate
         self.z += self.v
         if self.z < self.min_zoom:
             self.z = self.min_zoom
@@ -170,51 +154,20 @@ class StreamPipeline:
         frame_count = 0
         last_time = time.time()
         camera_initialized = False
-        detection_count = 0
-        lost_count = 0
         current_zoom_level = 1.0
         target_zoom_level = 1.0
-        max_zoom_level = 1.8
+        max_zoom_level = 1.7
         frames_tracking = 0
-        frames_required_for_zoom = 4
         lost_search_center = None
-        last_valid_y_tracking = None
         zoom = SmoothZoom(min_zoom=1.0, max_zoom=max_zoom_level)
         diag = int(math.hypot(reader.width, reader.height))
-        stable_step_px = max(6, int(diag * 0.030))
-        jump_reset_px = max(36, int(diag * 0.050))
-        cooldown_max = 18
-        cooldown = 0
-        last_stable = None
-        stability_score = 0.0
-        anchor = None
-        max_pan_step = max(8, int(diag * 0.012))
-        anchor_ready_px = max(28, int(diag * 0.055))
-        zoom_lock_count = 0
-        zoom_lock_max = 36
-        hold_zoom_level = 1.0
-        last_raw = None
-        last_vec = (0.0, 0.0)
-        natural_counter = 0
-        natural_step_px = max(10, int(diag * 0.020))
-        min_dir_cos = 0.4
-        recent_positions = []
-        close_counter = 0
-        close_thresh = max(14, int(diag * 0.050))
-        last_det = None
-        prev_zoom_center = None
         prev_crop = None
         roi_active = False
         roi_stable_frames = 0
-        roi_ready_frames = 35
+        roi_ready_frames = 45
         roi_fail_count = 0
-        roi_fail_max = 120  # 4 seconds at 30fps
+        roi_fail_max = 90
         roi_last_valid_pos = None
-        bloom_counter = 0
-        bloom_max = 12
-        far_reacquire_count = 0
-        far_reacquire_need = 6
-        det_skip = 0
         
         logger.info("Starting main loop... (Press 'q' to quit)")
         
@@ -227,14 +180,7 @@ class StreamPipeline:
                     logger.info("End of stream")
                     break
                 
-                do_inference = True
-                if frames_tracking >= 8:
-                    if det_skip > 0:
-                        det_skip -= 1
-                        do_inference = False
-                    else:
-                        det_skip = 1
-                if do_inference:
+                if True:
                     t_inference_start = time.time()
                     use_roi = False
                     offx, offy = 0, 0
@@ -251,10 +197,7 @@ class StreamPipeline:
                     else:
                         det_result = self.detector.predict_ball_only(frame, self.ball_class_id, return_candidates=True)
                     t_inference = (time.time() - t_inference_start) * 1000
-                else:
-                    det_result = (None, None)
-                    t_inference = 0.0
-                self.performance_stats['inference_times'].append(t_inference)
+                    self.performance_stats['inference_times'].append(t_inference)
                 if isinstance(det_result, tuple) and len(det_result) == 2 and (
                     det_result[0] is None or isinstance(det_result[0], tuple)
                 ):
@@ -290,17 +233,14 @@ class StreamPipeline:
                             # Too many detections = confusion
                             detection_viable = False
                         
-                        if detection_viable:
-                            roi_last_valid_pos = (bx, by)
-                    
-                    # Only increment fail count if no viable detection
-                    if not detection_viable:
-                        roi_fail_count += 1
-                    else:
+                    if detection_viable:
+                        roi_last_valid_pos = (bx, by)
                         roi_fail_count = 0
+                    else:
+                        roi_fail_count += 1
                     
                     if roi_fail_count >= roi_fail_max:
-                        logger.info(f"ROI lost ball for {roi_fail_max} frames - switching to full-frame detection")
+                        logger.info(f"ROI unstable - switching to full-frame")
                         roi_active = False
                         roi_fail_count = 0
                         roi_last_valid_pos = None
@@ -308,32 +248,19 @@ class StreamPipeline:
                 # Spatial filter: exclude stands/lights regions (top + sides)
                 # ONLY apply when ROI is NOT active AND zoom < 1.4
                 # When zoomed in or ROI active, we're already focused on playing field
-                apply_spatial_filter = (not roi_active) and (current_zoom_level < 1.4)
+                apply_spatial_filter = (not roi_active) and (current_zoom_level < 1.3)
                 
                 if apply_spatial_filter:
-                    # TOP: Reject detections in upper 25% of frame (stands/lights)
-                    # SIDES: Reject detections in outer 15% on left and right (side stands)
                     if detection is not None:
                         bx, by, bw, bh, bconf = detection
-                        # Exclude top region
-                        if by < reader.height * 0.25:
-                            detection = None
-                        # Exclude left side region
-                        elif bx < reader.width * 0.15:
-                            detection = None
-                        # Exclude right side region
-                        elif bx > reader.width * 0.85:
+                        if by < reader.height * 0.22 or bx < reader.width * 0.12 or bx > reader.width * 0.88:
                             detection = None
                     
-                    # Filter detections_list as well
                     if detections_list:
                         filtered_dets = []
                         for d in detections_list:
                             dx, dy = d[0], d[1]
-                            # Keep only detections in valid playing field area
-                            if (dy >= reader.height * 0.25 and 
-                                dx >= reader.width * 0.15 and 
-                                dx <= reader.width * 0.85):
+                            if dy >= reader.height * 0.22 and dx >= reader.width * 0.12 and dx <= reader.width * 0.88:
                                 filtered_dets.append(d)
                         detections_list = filtered_dets if filtered_dets else None
                 
@@ -343,7 +270,7 @@ class StreamPipeline:
                 self.performance_stats['tracking_times'].append(t_tracking)
                 
                 t_camera_start = time.time()
-                ball_detection = detection
+                
                 if not camera_initialized and track_result:
                     x, y, is_tracking = track_result
                     self.virtual_camera.reset()
@@ -351,130 +278,60 @@ class StreamPipeline:
                     camera_initialized = True
                 elif track_result:
                     x, y, is_tracking = track_result
+                    
                     if not is_tracking:
                         roi_active = False
                         roi_fail_count = 0
                         roi_last_valid_pos = None
+                        frames_tracking = 0
+                    else:
+                        frames_tracking += 1
+                    
                     state = self.tracker.get_state()
                     vmag = state['velocity_magnitude'] if state else 0.0
-                    kalman_ok = state['kalman_stable'] if state else True
                     
-                    
-                    # TRUST THE TRACKER: Use Kalman-smoothed coordinates directly
-                    # The tracker already handles gating, outlier rejection, and smoothing
                     use_x, use_y = x, y
-                    
-                    # Update detection history for other metrics (bloom, etc)
-                    if ball_detection:
-                        bx, by, bw, bh, bconf = ball_detection
-                        # Update far reacquire tracking for zoom management
-                        far_thresh = max(int(diag * 0.22), 180)
-                        d_far = math.hypot(bx - x, by - y)
-                        if d_far > far_thresh:
-                            far_reacquire_count += 1
-                        else:
-                            far_reacquire_count = max(far_reacquire_count - 1, 0)
-                    if is_tracking:
-                        frames_tracking += 1
-                    else:
-                        frames_tracking = max(frames_tracking - 1, 0)
-                    if ball_detection:
-                        last_det = (ball_detection[0], ball_detection[1])
-                    if last_raw is not None:
-                        dxn = x - last_raw[0]
-                        dyn = y - last_raw[1]
-                        step = math.hypot(dxn, dyn)
-                        lvx, lvy = last_vec
-                        lvnorm = math.hypot(lvx, lvy)
-                        dnorm = math.hypot(dxn, dyn)
-                        cosd = (lvx*dxn + lvy*dyn)/(lvnorm*dnorm) if (lvnorm>1e-6 and dnorm>1e-6) else 1.0
-                        if step <= natural_step_px or cosd >= min_dir_cos:
-                            natural_counter += 1
-                        else:
-                            natural_counter = max(natural_counter - 1, 0)
-                        last_vec = (0.8*lvx + 0.2*dxn, 0.8*lvy + 0.2*dyn)
-                        if is_tracking and ball_detection is not None and cosd <= -0.3 and step > close_thresh*1.2:
-                            bloom_counter = min(bloom_max // 2, 6)
-                    last_raw = (x, y)
-                    vhx, vhy = self.tracker.get_velocity()
                     
                     if is_tracking:
                         lost_search_center = None
                     
-                    safe_use_x = use_x
-                    safe_use_y = use_y
                     crop_half_h = self.virtual_camera.effective_height // 2
                     crop_half_w = self.virtual_camera.effective_width // 2
                     
-                    safe_use_x = max(crop_half_w + 20, min(safe_use_x, reader.width - crop_half_w - 20))
-                    safe_use_y = max(crop_half_h + 20, min(safe_use_y, reader.height - crop_half_h - 20))
+                    safe_x = max(crop_half_w + 20, min(use_x, reader.width - crop_half_w - 20))
+                    safe_y = max(crop_half_h + 20, min(use_y, reader.height - crop_half_h - 20))
                     
-                    if is_tracking and ball_detection:
-                        last_valid_y_tracking = safe_use_y
-                    elif not is_tracking:
+                    if not is_tracking:
                         prev_y = self.virtual_camera.current_center_y
                         min_allowed_y = int(reader.height * 0.35)
-                        if prev_y < min_allowed_y:
-                            safe_use_y = min_allowed_y
-                        else:
-                            safe_use_y = prev_y
+                        safe_y = max(min_allowed_y, prev_y)
                     
-                    crop_coords = self.virtual_camera.update(safe_use_x, safe_use_y, time.time(), velocity_hint=(vhx, vhy))
-                    detection_count += 1
-                    lost_count = 0
-                    recent_positions.append((x, y))
-                    if len(recent_positions) > 12:
-                        recent_positions.pop(0)
-                    if len(recent_positions) >= 5:
-                        total = 0.0
-                        cnt = 0
-                        for i in range(len(recent_positions) - 1):
-                            dxs = recent_positions[i + 1][0] - recent_positions[i][0]
-                            dys = recent_positions[i + 1][1] - recent_positions[i][1]
-                            total += math.hypot(dxs, dys)
-                            cnt += 1
-                        avg_step = total / cnt if cnt > 0 else 0.0
-                        if avg_step <= close_thresh:
-                            close_counter += 1
+                    vhx, vhy = self.tracker.get_velocity()
+                    crop_coords = self.virtual_camera.update(safe_x, safe_y, time.time(), velocity_hint=(vhx, vhy))
+                    
+                    if is_tracking and frames_tracking >= 8:
+                        if vmag > 900:
+                            target_zoom_level = 1.15
+                        elif vmag > 600:
+                            target_zoom_level = 1.30
+                        elif vmag > 350:
+                            target_zoom_level = 1.45
                         else:
-                            close_counter = max(close_counter - 1, 0)
-                    zoom_gate_ok = is_tracking and (frames_tracking >= frames_required_for_zoom or natural_counter >= 2 or close_counter >= 2)
-                    if zoom_gate_ok:
-                        if vmag > 950:
-                            target_zoom_level = 1.20
-                        elif vmag > 650:
-                            target_zoom_level = 1.35
-                        elif vmag > 380:
-                            target_zoom_level = 1.50
-                        else:
-                            target_zoom_level = 1.65
-                        zoom_lock_count = zoom_lock_max
-                        hold_zoom_level = target_zoom_level
-                        if is_tracking:
+                            target_zoom_level = 1.60
+                        
+                        if roi_stable_frames < roi_ready_frames:
                             roi_stable_frames += 1
-                        else:
-                            roi_stable_frames = max(roi_stable_frames - 1, 0)
-                        if (not roi_active) and roi_stable_frames >= roi_ready_frames:
+                        
+                        if not roi_active and roi_stable_frames >= roi_ready_frames:
                             roi_active = True
                             roi_fail_count = 0
-                            roi_last_valid_pos = None  # Reset on ROI activation
+                            roi_last_valid_pos = None
                     else:
-                        if not is_tracking:
-                            zoom_lock_count = 0
-                            hold_zoom_level = 1.0
-                            target_zoom_level = 1.0
-                        elif zoom_lock_count > 0:
-                            zoom_lock_count -= 1
-                            hold_zoom_level = max(1.2, hold_zoom_level * 0.98)
-                            target_zoom_level = hold_zoom_level
-                        else:
-                            target_zoom_level = 1.0
+                        target_zoom_level = 1.0
+                        roi_stable_frames = max(0, roi_stable_frames - 2)
                 else:
-                    lost_count += 1
                     frames_tracking = 0
                     target_zoom_level = 1.0
-                    zoom_lock_count = 0
-                    hold_zoom_level = 1.0
                     roi_active = False
                     roi_stable_frames = 0
                     
@@ -485,120 +342,54 @@ class StreamPipeline:
                         lost_search_center = (cx, cy)
                     
                     search_target_x = int(reader.width * 0.50)
-                    search_target_y = int(reader.height * 0.38)
+                    search_target_y = int(reader.height * 0.40)
                     
-                    expansion_alpha = min(0.03 + (lost_count * 0.001), 0.08)
-                    new_cx = int(lost_search_center[0] * (1.0 - expansion_alpha) + search_target_x * expansion_alpha)
-                    new_cy = int(lost_search_center[1] * (1.0 - expansion_alpha) + search_target_y * expansion_alpha)
+                    lost_search_center = (
+                        int(lost_search_center[0] * 0.96 + search_target_x * 0.04),
+                        int(lost_search_center[1] * 0.96 + search_target_y * 0.04)
+                    )
                     
-                    min_allowed_y = int(reader.height * 0.35)
-                    new_cy = max(min_allowed_y, new_cy)
-                    
-                    lost_search_center = (new_cx, new_cy)
-                    crop_coords = self.virtual_camera.update(new_cx, new_cy, time.time(), velocity_hint=(0, 0))
+                    crop_coords = self.virtual_camera.update(lost_search_center[0], lost_search_center[1], time.time(), velocity_hint=(0, 0))
                 zoom.set_target(target_zoom_level)
                 current_zoom_level = zoom.update()
+                
                 x1, y1, x2, y2 = crop_coords
-                if track_result:
-                    zoom_cx = int(x)
-                    zoom_cy = int(y)
-                else:
-                    zoom_cx = (x1 + x2) // 2
-                    zoom_cy = (y1 + y2) // 2
-                safe_margin = max(8, int(diag * 0.02))
-                if zoom_cx < safe_margin: zoom_cx = safe_margin
-                if zoom_cx > reader.width - safe_margin: zoom_cx = reader.width - safe_margin
-                if zoom_cy < safe_margin: zoom_cy = safe_margin
-                if zoom_cy > reader.height - safe_margin: zoom_cy = reader.height - safe_margin
-                if prev_zoom_center is not None:
-                    zfac = max(0.0, min(1.0, current_zoom_level - 1.0))
-                    az = 0.18 + 0.16 * zfac
-                    zoom_cx = int(prev_zoom_center[0] * (1.0 - az) + zoom_cx * az)
-                    zoom_cy = int(prev_zoom_center[1] * (1.0 - az) + zoom_cy * az)
-                prev_zoom_center = (zoom_cx, zoom_cy)
-                if current_zoom_level > 1.0:
+                
+                if current_zoom_level > 1.01:
                     crop_width = x2 - x1
                     crop_height = y2 - y1
                     zoomed_width = int(crop_width / current_zoom_level)
                     zoomed_height = int(crop_height / current_zoom_level)
-                    x1 = max(0, zoom_cx - zoomed_width // 2)
-                    y1 = max(0, zoom_cy - zoomed_height // 2)
+                    
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    
+                    x1 = max(0, cx - zoomed_width // 2)
+                    y1 = max(0, cy - zoomed_height // 2)
                     x2 = min(reader.width, x1 + zoomed_width)
                     y2 = min(reader.height, y1 + zoomed_height)
+                    
                     if x2 - x1 < zoomed_width:
                         x1 = max(0, x2 - zoomed_width)
                     if y2 - y1 < zoomed_height:
                         y1 = max(0, y2 - zoomed_height)
-                    if track_result:
-                        rel_x = int(x - x1)
-                        rel_y = int(y - y1)
-                        mx = int(zoomed_width * 0.35)
-                        my = int(zoomed_height * 0.35)
-                        if rel_x < mx:
-                            shift = mx - rel_x
-                            s = max(1, int(shift * 0.45))
-                            x1 = max(0, min(reader.width - zoomed_width, x1 - s))
-                            x2 = x1 + zoomed_width
-                        elif rel_x > zoomed_width - mx:
-                            shift = rel_x - (zoomed_width - mx)
-                            s = max(1, int(shift * 0.45))
-                            x1 = max(0, min(reader.width - zoomed_width, x1 + s))
-                            x2 = x1 + zoomed_width
-                        if rel_y < my:
-                            shift = my - rel_y
-                            s = max(1, int(shift * 0.45))
-                            y1 = max(0, min(reader.height - zoomed_height, y1 - s))
-                            y2 = y1 + zoomed_height
-                        elif rel_y > zoomed_height - my:
-                            shift = rel_y - (zoomed_height - my)
-                            s = max(1, int(shift * 0.45))
-                            y1 = max(0, min(reader.height - zoomed_height, y1 + s))
-                            y2 = y1 + zoomed_height
-                x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
                 
-                # REMOVED: Secondary smoothing filter (conflicted with OneEuroFilter)
-                # The OneEuroFilter inside VirtualCamera already handles all smoothing
+                x1 = max(0, min(reader.width - 2, int(x1)))
+                y1 = max(0, min(reader.height - 2, int(y1)))
+                x2 = max(x1 + 2, min(reader.width, int(x2)))
+                y2 = max(y1 + 2, min(reader.height, int(y2)))
                 
-                strict_margin = 5
-                if x1 < strict_margin: 
-                    x1 = strict_margin
-                    x2 = x1 + (prev_crop[2] - prev_crop[0] if prev_crop else self.virtual_camera.effective_width)
-                if y1 < strict_margin: 
-                    y1 = strict_margin
-                    y2 = y1 + (prev_crop[3] - prev_crop[1] if prev_crop else self.virtual_camera.effective_height)
-                if x2 > reader.width - strict_margin: 
-                    x2 = reader.width - strict_margin
-                    x1 = x2 - (prev_crop[2] - prev_crop[0] if prev_crop else self.virtual_camera.effective_width)
-                if y2 > reader.height - strict_margin: 
-                    y2 = reader.height - strict_margin
-                    y1 = y2 - (prev_crop[3] - prev_crop[1] if prev_crop else self.virtual_camera.effective_height)
-                
-                if x1 < 0: x1 = 0
-                if y1 < 0: y1 = 0
-                if x2 > reader.width: x2 = reader.width
-                if y2 > reader.height: y2 = reader.height
-                if x2 <= x1: x2 = min(reader.width, x1 + 2)
-                if y2 <= y1: y2 = min(reader.height, y1 + 2)
                 prev_crop = (x1, y1, x2, y2)
-                x1o, y1o, x2o, y2o = x1, y1, x2, y2
                 t_camera = (time.time() - t_camera_start) * 1000
                 self.performance_stats['camera_times'].append(t_camera)
 
-                cropped = frame[y1o:y2o, x1o:x2o]
+                cropped = frame[y1:y2, x1:x2]
                 
                 if cropped.shape[:2] != (self.config['output']['height'], self.config['output']['width']):
                     cropped = cv2.resize(
                         cropped,
                         (self.config['output']['width'], self.config['output']['height'])
                     )
-                
-                if bloom_counter > 0 and track_result and is_tracking:
-                    intensity = bloom_counter / max(bloom_max, 1)
-                    blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=4, sigmaY=4)
-                    cropped = cv2.addWeighted(cropped, 1.0, blurred, 0.12*intensity, 0)
-                    bloom_counter -= 1
-                elif not (track_result and is_tracking):
-                    bloom_counter = 0
                 
                 if self.show_stats:
                     current_fps = 1.0 / (time.time() - loop_start) if (time.time() - loop_start) > 0 else 0

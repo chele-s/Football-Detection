@@ -9,10 +9,11 @@ logger = logging.getLogger(__name__)
 
 
 class ExtendedKalmanFilter:
-    def __init__(self, dt: float = 1/30, process_noise: float = 0.01, measurement_noise: float = 20.0):
+    def __init__(self, dt: float = 1/30, process_noise: float = 0.01, measurement_noise: float = 5.0):
         self.dt = dt
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
+        self.base_measurement_noise = measurement_noise
         
         self.F = np.array([
             [1, 0, dt, 0, 0.5*dt**2, 0],
@@ -104,6 +105,10 @@ class ExtendedKalmanFilter:
         self.Q *= factor
         self.R *= factor
         logger.debug(f"Kalman noise adapted by factor {factor:.2f}")
+    
+    def set_measurement_noise(self, noise: float):
+        self.measurement_noise = noise
+        self.R = np.eye(2, dtype=np.float64) * noise
 
 
 class BallTracker:
@@ -122,10 +127,11 @@ class BallTracker:
         self.iou_threshold = iou_threshold
         self.adaptive_noise = adaptive_noise
         
-        self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=20.0)
+        self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=5.0)
         self.lost_frames = 0
         self.track_id = 0
         self.is_tracking = False
+        self.consecutive_detections = 0
         
         self.position_history = deque(maxlen=history_size)
         self.confidence_history = deque(maxlen=history_size)
@@ -156,53 +162,60 @@ class BallTracker:
     ) -> Optional[Tuple[float, float, bool]]:
         self.stats['total_updates'] += 1
         
+        tracking_strength = min(self.consecutive_detections / 15.0, 1.0)
+        is_stable = tracking_strength > 0.5
+        is_recovering = self.lost_frames > 0 and self.lost_frames <= 5
+        
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             
-            # Temporarily disable min_confidence gate for debugging
-            # if confidence < self.min_confidence:
-            #     logger.debug(f"Detection rejected: confidence {confidence:.2f} < {self.min_confidence}")
-            #     detection = None
+            if confidence < self.min_confidence:
+                if is_stable:
+                    logger.debug(f"Low confidence {confidence:.2f}, but tracker stable - accepting")
+                else:
+                    detection = None
         
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             bbox = (x_center, y_center, width, height)
-            # Immediate init/lock on first valid detection
+            
             if not self.kalman.initialized:
                 _ = self.kalman.correct(x_center, y_center)
                 vx, vy = self.kalman.get_velocity()
                 self.velocity_history.append((vx, vy))
                 self.lost_frames = 0
+                self.consecutive_detections = 1
                 self.is_tracking = True
                 self.last_detection = detection
                 self.last_bbox = bbox
                 self.position_history.append((x_center, y_center))
                 self.confidence_history.append(confidence)
                 self.stats['successful_tracks'] += 1
+                self.kalman.set_measurement_noise(5.0)
                 return (x_center, y_center, True)
             
-            # Apply strict gating ONLY when already tracking
-            if self.is_tracking and self.last_bbox is not None:
-                iou = self._compute_iou(bbox, self.last_bbox)
-                if iou < self.iou_threshold:
-                    if iou > 0.05:
-                        logger.debug(f"Low IoU: {iou:.3f}, potential outlier")
-                    if self._is_outlier(x_center, y_center):
+            should_gate = is_stable and not is_recovering
+            
+            if should_gate and self.last_bbox is not None:
+                vx_est, vy_est = self.get_velocity()
+                vmag = float(np.sqrt(vx_est**2 + vy_est**2))
+                
+                base_distance = 180.0
+                velocity_factor = min(vmag * 2.5, 800.0)
+                lost_relaxation = min(self.lost_frames * 150.0, 600.0)
+                allowed_distance = base_distance + velocity_factor + lost_relaxation
+                
+                dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
+                
+                if dist_curr > allowed_distance:
+                    if confidence > 0.7:
+                        logger.info(f"High confidence detection ({confidence:.2f}) overrides distance gate ({dist_curr:.1f} > {allowed_distance:.1f})")
+                    else:
+                        logger.debug(f"Distance gate: {dist_curr:.1f} > {allowed_distance:.1f}")
                         self.stats['outliers_rejected'] += 1
                         detection = None
                 
                 if detection is not None:
-                    # Gating: distance from current estimate (velocity-aware)
-                    vx_est, vy_est = self.get_velocity()
-                    vmag = float(np.sqrt(vx_est**2 + vy_est**2))
-                    allowed_distance = max(120.0, min(900.0, 3.5 * vmag + 220.0))
-                    dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
-                    if dist_curr > allowed_distance:
-                        self.stats['outliers_rejected'] += 1
-                        detection = None
-                    
-                if detection is not None:
-                    # Mahalanobis gating before applying update
                     H = self.kalman.H
                     P = self.kalman.P
                     R = self.kalman.R
@@ -217,28 +230,46 @@ class BallTracker:
                         S += np.eye(2) * 1e-4
                         S_inv = np.linalg.inv(S)
                     maha = float(y.T @ S_inv @ y)
-                    gate_thr = 11.83
-                    if maha > gate_thr:
-                        self.stats['outliers_rejected'] += 1
-                        detection = None
+                    
+                    base_threshold = 15.0
+                    lost_bonus = min(self.lost_frames * 8.0, 40.0)
+                    confidence_bonus = max(0, (confidence - 0.6) * 25.0)
+                    gate_threshold = base_threshold + lost_bonus + confidence_bonus
+                    
+                    if maha > gate_threshold:
+                        if confidence > 0.75:
+                            logger.info(f"High confidence ({confidence:.2f}) overrides Mahalanobis gate ({maha:.1f} > {gate_threshold:.1f})")
+                        else:
+                            logger.debug(f"Mahalanobis gate: {maha:.1f} > {gate_threshold:.1f}")
+                            self.stats['outliers_rejected'] += 1
+                            detection = None
                 
             if detection is not None:
                 mahalanobis = self.kalman.correct(x_center, y_center)
                 self.mahalanobis_history.append(mahalanobis)
                 
-                if self.adaptive_noise and len(self.mahalanobis_history) >= 10:
-                    avg_mahal = np.mean(list(self.mahalanobis_history)[-10:])
-                    if avg_mahal > 12.0:
-                        self.kalman.adapt_noise(1.1)
-                        self.stats['noise_adaptations'] += 1
-                    elif avg_mahal < 1.2:
-                        self.kalman.adapt_noise(0.95)
-                        self.stats['noise_adaptations'] += 1
+                self.lost_frames = 0
+                self.consecutive_detections += 1
+                
+                current_strength = min(self.consecutive_detections / 15.0, 1.0)
+                target_noise = 3.0 + (7.0 * (1.0 - current_strength))
+                self.kalman.set_measurement_noise(target_noise)
+                
+                if self.adaptive_noise and len(self.position_history) >= 5:
+                    recent_positions = list(self.position_history)[-5:]
+                    movements = [np.sqrt((recent_positions[i+1][0] - recent_positions[i][0])**2 + 
+                                       (recent_positions[i+1][1] - recent_positions[i][1])**2)
+                               for i in range(len(recent_positions)-1)]
+                    avg_movement = np.mean(movements)
+                    
+                    if avg_movement < 5.0:
+                        self.kalman.Q *= 0.98
+                    elif avg_movement > 50.0:
+                        self.kalman.Q *= 1.02
                 
                 vx, vy = self.kalman.get_velocity()
                 self.velocity_history.append((vx, vy))
                 
-                self.lost_frames = 0
                 self.is_tracking = True
                 self.last_detection = detection
                 self.last_bbox = bbox
@@ -253,20 +284,28 @@ class BallTracker:
                     logger.debug(f"Tracker stats: updates={self.stats['total_updates']}, "
                                 f"tracks={self.stats['successful_tracks']}, "
                                 f"predictions={self.stats['predictions_used']}, "
-                                f"outliers={self.stats['outliers_rejected']}")
+                                f"outliers={self.stats['outliers_rejected']}, "
+                                f"strength={current_strength:.2f}")
                 
                 return (x_center, y_center, True)
         
         self.lost_frames += 1
+        self.consecutive_detections = max(0, self.consecutive_detections - 2)
         logger.debug(f"Lost frames: {self.lost_frames}/{self.max_lost_frames}")
+        
+        if self.lost_frames == 1:
+            self.kalman.set_measurement_noise(8.0)
+        elif self.lost_frames == 3:
+            self.kalman.set_measurement_noise(12.0)
         
         if self.lost_frames <= self.max_lost_frames and self.kalman.initialized:
             pred_x, pred_y = self.kalman.predict()
             
             if detections_list and len(detections_list) > 0:
-                best_match = self._find_best_match(pred_x, pred_y, detections_list)
+                search_radius = min(300.0 + (self.lost_frames * 100.0), 800.0)
+                best_match = self._find_best_match(pred_x, pred_y, detections_list, search_radius)
                 if best_match is not None:
-                    logger.info("Recovered track with alternative detection")
+                    logger.info(f"Recovered track with alternative detection (lost_frames={self.lost_frames})")
                     return self.update(best_match)
             
             self.predicted_position = (pred_x, pred_y)
@@ -277,11 +316,12 @@ class BallTracker:
             
             if not self.kalman.is_stable():
                 logger.debug("Kalman filter unstable, increasing uncertainty")
-                self.kalman.adapt_noise(1.2)
+                self.kalman.P *= 1.3
             
             return (pred_x, pred_y, False)
         else:
             self.is_tracking = False
+            self.consecutive_detections = 0
             logger.info(f"Track lost after {self.lost_frames} frames")
             return None
     
@@ -327,15 +367,15 @@ class BallTracker:
         return z_score_x > 3.0 or z_score_y > 3.0
     
     def _find_best_match(self, pred_x: float, pred_y: float, 
-                         detections: List[Tuple[float, float, float, float, float]]) -> Optional[Tuple]:
+                         detections: List[Tuple[float, float, float, float, float]], 
+                         search_radius: float = 300.0) -> Optional[Tuple]:
         if not detections:
             return None
         
         best_detection = None
         best_score = float('inf')
-        vx, vy = self.get_velocity()
-        vmag = float(np.sqrt(vx**2 + vy**2))
-        allowed_distance = min(320.0, max(100.0, 2.5 * vmag))
+        
+        relaxed_conf_threshold = max(0.2, self.min_confidence - 0.15)
         
         for det in detections:
             if len(det) == 6:
@@ -345,12 +385,13 @@ class BallTracker:
                 x, y, w, h, conf = det
                 det_tuple = det
             
-            if conf < self.min_confidence:
+            if conf < relaxed_conf_threshold:
                 continue
             
             distance = float(np.sqrt((x - pred_x)**2 + (y - pred_y)**2))
-            if distance > allowed_distance:
+            if distance > search_radius:
                 continue
+            
             score = distance / max(conf, 1e-3)
             if score < best_score:
                 best_score = score
@@ -394,8 +435,9 @@ class BallTracker:
     def reset(self):
         logger.info("Resetting BallTracker")
         dt = self.kalman.dt
-        self.kalman = ExtendedKalmanFilter(dt=dt)
+        self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=5.0)
         self.lost_frames = 0
+        self.consecutive_detections = 0
         self.is_tracking = False
         self.position_history.clear()
         self.confidence_history.clear()
