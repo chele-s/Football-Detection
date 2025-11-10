@@ -98,40 +98,73 @@ class BallDetector:
         self.model.optimize_for_inference()
         logger.info("Model optimization complete - ready for inference")
         
-        # CRITICAL: Manually move internal model to GPU
-        # RF-DETR wraps a PyTorch model, we need to access it directly
-        logger.info(f"Manually moving model to {self.device}...")
+        # CRITICAL: Manually move model to GPU
+        # RF-DETR uses nested wrappers, we need to move parameters directly
+        logger.info(f"Moving model to {self.device}...")
         
-        if hasattr(self.model, 'model'):
-            # Access internal PyTorch model
-            logger.info("Found internal .model attribute - moving to GPU")
-            self.model.model = self.model.model.to(self.device)
+        try:
+            # Strategy: Recursively find and move all PyTorch modules
+            def move_to_device(obj, device, use_fp16=False):
+                """Recursively move all torch modules/parameters to device"""
+                moved_count = 0
+                
+                # Try to access common attributes that might contain models
+                for attr_name in ['model', 'detector', 'backbone', 'encoder', 'decoder', 'head']:
+                    if hasattr(obj, attr_name):
+                        attr = getattr(obj, attr_name)
+                        if attr is not None:
+                            # Try to move this attribute
+                            try:
+                                if hasattr(attr, 'to'):
+                                    logger.info(f"Moving .{attr_name} to {device}")
+                                    setattr(obj, attr_name, attr.to(device))
+                                    if use_fp16:
+                                        setattr(obj, attr_name, getattr(obj, attr_name).half())
+                                    moved_count += 1
+                                else:
+                                    # Recurse deeper
+                                    moved_count += move_to_device(attr, device, use_fp16)
+                            except Exception as e:
+                                logger.debug(f"Could not move .{attr_name}: {e}")
+                
+                # Also try to move parameters directly if this is a Module
+                if hasattr(obj, 'parameters'):
+                    try:
+                        for param in obj.parameters():
+                            if param.device.type != device:
+                                param.data = param.data.to(device)
+                                if use_fp16 and device == 'cuda':
+                                    param.data = param.data.half()
+                                moved_count += 1
+                    except:
+                        pass
+                
+                return moved_count
             
-            if self.half_precision and self.device == 'cuda':
-                logger.info("Converting internal model to FP16")
-                self.model.model = self.model.model.half()
-                logger.info("Model converted to FP16 successfully")
+            # Try to move the model
+            moved = move_to_device(self.model, self.device, self.half_precision)
+            logger.info(f"Moved {moved} components to {self.device}")
             
-            # Verify
-            model_device = next(self.model.model.parameters()).device
-            model_dtype = next(self.model.model.parameters()).dtype
-            logger.info(f"✓ Internal model on: {model_device}, dtype: {model_dtype}")
-        else:
-            logger.warning("Could not find internal .model attribute - trying direct access")
-            # Fallback: try to access parameters directly
-            try:
-                params = list(self.model.parameters())
-                if params:
-                    logger.info(f"Found {len(params)} parameters - current device: {params[0].device}")
-                    # Try to move all parameters
-                    for param in self.model.parameters():
-                        param.data = param.data.to(self.device)
-                        if self.half_precision and self.device == 'cuda':
-                            param.data = param.data.half()
-                    logger.info("Parameters moved to GPU manually")
-            except Exception as e:
-                logger.error(f"Failed to move model to GPU: {e}")
-                logger.error("Model will run on CPU - performance will be degraded")
+            # Verify by checking first parameter we can find
+            verification_done = False
+            for attr_name in ['model', 'detector', 'backbone']:
+                if hasattr(self.model, attr_name):
+                    attr = getattr(self.model, attr_name)
+                    if hasattr(attr, 'parameters'):
+                        try:
+                            first_param = next(attr.parameters())
+                            logger.info(f"✓ Model on: {first_param.device}, dtype: {first_param.dtype}")
+                            verification_done = True
+                            break
+                        except:
+                            pass
+            
+            if not verification_done:
+                logger.warning("Could not verify model device - proceeding anyway")
+                
+        except Exception as e:
+            logger.error(f"Error moving model to GPU: {e}")
+            logger.error("Model may run on CPU - performance will be degraded")
         
         self.inference_times = deque(maxlen=100)
         self.detection_history = deque(maxlen=30)
