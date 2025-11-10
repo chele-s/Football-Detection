@@ -14,56 +14,53 @@ import tensorrt as trt
 from pathlib import Path
 import numpy as np
 import sys
+import os
 sys.path.append(str(Path(__file__).parent.parent))
 
 from rfdetr import RFDETRMedium
 
 def export_to_onnx(checkpoint_path: str, output_path: str, resolution: int = 480):
-    """Export RF-DETR model to ONNX format"""
+    """Export RF-DETR model to ONNX format using native export() method"""
     print(f"[1/3] Loading RF-DETR model from {checkpoint_path}")
     
-    model = RFDETRMedium(
-        num_classes=1,
-        resolution=resolution,
-        pretrain_weights=checkpoint_path
-    )
+    # Change to output directory for export
+    output_dir = Path(output_path).parent
+    output_dir.mkdir(exist_ok=True, parents=True)
     
-    model.optimize_for_inference()
+    # Save current directory and change to output dir
+    original_dir = os.getcwd()
+    os.chdir(output_dir)
     
-    # Access internal PyTorch model
-    if not hasattr(model, 'model'):
-        raise AttributeError("Cannot access internal model for export")
-    
-    pytorch_model = model.model
-    pytorch_model.eval()
-    pytorch_model = pytorch_model.cuda()
-    
-    print(f"[1/3] Creating dummy input: {resolution}x{resolution}")
-    dummy_input = torch.randn(1, 3, resolution, resolution).cuda()
-    
-    # Test forward pass
-    with torch.no_grad():
-        _ = pytorch_model(dummy_input)
-    print("[1/3] Model forward pass successful")
-    
-    print(f"[1/3] Exporting to ONNX: {output_path}")
-    torch.onnx.export(
-        pytorch_model,
-        dummy_input,
-        output_path,
-        export_params=True,
-        opset_version=17,
-        do_constant_folding=True,
-        input_names=['images'],
-        output_names=['output'],
-        dynamic_axes={
-            'images': {0: 'batch_size'},
-            'output': {0: 'batch_size'}
-        },
-        verbose=False
-    )
-    print(f"✓ ONNX export complete: {output_path}")
-    return output_path
+    try:
+        model = RFDETRMedium(
+            num_classes=1,
+            resolution=resolution,
+            pretrain_weights=str(Path(original_dir) / checkpoint_path)
+        )
+        
+        model.optimize_for_inference()
+        
+        print(f"[1/3] Exporting to ONNX using native export() method...")
+        print("⏳ This may take 2-3 minutes and show many TracerWarnings (normal)")
+        
+        # Use RF-DETR's native export method
+        # This creates "inference_model.onnx" in current directory
+        model.export()
+        
+        # Rename to our desired name
+        default_onnx = Path("inference_model.onnx")
+        target_onnx = Path(output_path).name
+        
+        if default_onnx.exists():
+            default_onnx.rename(target_onnx)
+            print(f"✓ ONNX export complete: {output_dir / target_onnx}")
+            return str(output_dir / target_onnx)
+        else:
+            raise FileNotFoundError("ONNX export failed - inference_model.onnx not created")
+            
+    finally:
+        # Restore original directory
+        os.chdir(original_dir)
 
 
 def build_tensorrt_engine(onnx_path: str, engine_path: str, fp16: bool = True):
