@@ -170,8 +170,11 @@ class StreamPipeline:
         roi_last_valid_pos = None
         
         logger.info("Starting main loop... (Press 'q' to quit)")
-        logger.info(f"Frame resolution: {reader.width}x{reader.height}")
-        logger.info(f"Dead zones configured: top-right corner (x>{reader.width*0.75:.0f}, y<{reader.height*0.35:.0f})")
+        print(f"\n{'='*60}")
+        print(f"📐 Frame resolution: {reader.width}x{reader.height}")
+        print(f"🚫 DEAD ZONE 1: x>{reader.width*0.70:.0f} AND y<{reader.height*0.40:.0f} (top-right)")
+        print(f"🚫 DEAD ZONE 2: x<{reader.width*0.08:.0f} AND y<{reader.height*0.40:.0f} (top-left)")
+        print(f"{'='*60}\n")
         
         try:
             while True:
@@ -208,23 +211,24 @@ class StreamPipeline:
                     detection = det_result
                     detections_list = None
                 
-                if detection is not None and frame_count % 30 == 0:
-                    dx, dy, dw, dh, dconf = detection
-                    logger.info(f"DETECTION: x={dx:.1f}, y={dy:.1f}, w={dw:.1f}, h={dh:.1f}, conf={dconf:.2f}")
-                
                 dead_zones = [
-                    {'x1': reader.width * 0.75, 'y1': 0, 'x2': reader.width, 'y2': reader.height * 0.35, 'name': 'top-right-corner'},
+                    {'x1': reader.width * 0.70, 'y1': 0, 'x2': reader.width, 'y2': reader.height * 0.40, 'name': 'top-right'},
+                    {'x1': 0, 'y1': 0, 'x2': reader.width * 0.08, 'y2': reader.height * 0.40, 'name': 'top-left'},
                 ]
                 
                 if detection is not None:
-                    dx, dy = detection[0], detection[1]
+                    dx, dy, dw, dh, dconf = detection
+                    if frame_count % 30 == 0:
+                        print(f"🎯 RAW DETECTION: x={dx:.0f}, y={dy:.0f}, conf={dconf:.2f}")
+                    
                     for zone in dead_zones:
                         if zone['x1'] <= dx <= zone['x2'] and zone['y1'] <= dy <= zone['y2']:
-                            logger.debug(f"Detection in dead zone '{zone['name']}' at ({dx:.1f}, {dy:.1f}) - REJECTED")
+                            print(f"❌ DEAD ZONE '{zone['name']}': x={dx:.0f}, y={dy:.0f} BLOCKED")
                             detection = None
                             break
                 
                 if detections_list:
+                    original_count = len(detections_list)
                     filtered_detections = []
                     for d in detections_list:
                         dx, dy = d[0], d[1]
@@ -236,6 +240,9 @@ class StreamPipeline:
                         if not in_dead_zone:
                             filtered_detections.append(d)
                     detections_list = filtered_detections if filtered_detections else None
+                    
+                    if original_count != len(filtered_detections) and frame_count % 30 == 0:
+                        print(f"🚫 Dead zones filtered {original_count - len(filtered_detections)} candidates")
                 if use_roi:
                     if detection is not None:
                         bx, by, bw, bh, bc = detection
@@ -301,7 +308,8 @@ class StreamPipeline:
                         other_high_conf = [d for d in detections_list if len(d) >= 5 and d[4] > det_conf * 0.75]
                         
                         if len(other_high_conf) >= 2:
-                            logger.debug(f"Multiple candidates: {len(detections_list)} total, {len(other_high_conf)} high-conf - REJECTING ALL")
+                            if frame_count % 30 == 0:
+                                print(f"⚠ Multiple candidates: {len(detections_list)} total, {len(other_high_conf)} high-conf - REJECTING ALL")
                             detection = None
                             detections_list = None
                 
