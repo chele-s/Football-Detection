@@ -170,11 +170,11 @@ class StreamPipeline:
         roi_last_valid_pos = None
         
         logger.info("Starting main loop... (Press 'q' to quit)")
-        print(f"\n{'='*60}")
-        print(f"📐 Frame resolution: {reader.width}x{reader.height}")
-        print(f"🚫 DEAD ZONE 1: x>{reader.width*0.70:.0f} AND y<{reader.height*0.40:.0f} (top-right)")
-        print(f"🚫 DEAD ZONE 2: x<{reader.width*0.08:.0f} AND y<{reader.height*0.40:.0f} (top-left)")
-        print(f"{'='*60}\n")
+        logger.warning("="*60)
+        logger.warning(f"Frame resolution: {reader.width}x{reader.height}")
+        logger.warning(f"DEAD_ZONE[top-right]: x>{reader.width*0.70:.0f} AND y<{reader.height*0.40:.0f}")
+        logger.warning(f"DEAD_ZONE[top-left]: x<{reader.width*0.08:.0f} AND y<{reader.height*0.40:.0f}")
+        logger.warning("="*60)
         
         try:
             while True:
@@ -218,40 +218,66 @@ class StreamPipeline:
                 
                 if detection is not None:
                     dx, dy, dw, dh, dconf = detection
-                    if frame_count % 30 == 0:
-                        print(f"🎯 RAW DETECTION: x={dx:.0f}, y={dy:.0f}, conf={dconf:.2f}")
                     
                     for zone in dead_zones:
                         if zone['x1'] <= dx <= zone['x2'] and zone['y1'] <= dy <= zone['y2']:
-                            print(f"❌ DEAD ZONE '{zone['name']}': x={dx:.0f}, y={dy:.0f} BLOCKED")
+                            logger.warning(f"DEAD_ZONE[{zone['name']}] x={dx:.0f} y={dy:.0f} BLOCKED")
                             detection = None
                             break
                 
                 if detections_list:
                     original_count = len(detections_list)
                     filtered_detections = []
+                    blocked_count = 0
                     for d in detections_list:
                         dx, dy = d[0], d[1]
                         in_dead_zone = False
                         for zone in dead_zones:
                             if zone['x1'] <= dx <= zone['x2'] and zone['y1'] <= dy <= zone['y2']:
                                 in_dead_zone = True
+                                blocked_count += 1
                                 break
                         if not in_dead_zone:
                             filtered_detections.append(d)
                     detections_list = filtered_detections if filtered_detections else None
                     
-                    if original_count != len(filtered_detections) and frame_count % 30 == 0:
-                        print(f"🚫 Dead zones filtered {original_count - len(filtered_detections)} candidates")
+                    if blocked_count > 0:
+                        logger.warning(f"Dead zones blocked {blocked_count}/{original_count} detections")
                 if use_roi:
                     if detection is not None:
                         bx, by, bw, bh, bc = detection
-                        detection = (bx + offx, by + offy, bw, bh, bc)
+                        global_x = bx + offx
+                        global_y = by + offy
+                        
+                        for zone in dead_zones:
+                            if zone['x1'] <= global_x <= zone['x2'] and zone['y1'] <= global_y <= zone['y2']:
+                                logger.warning(f"ROI_DEAD_ZONE[{zone['name']}] x={global_x:.0f} y={global_y:.0f} BLOCKED")
+                                detection = None
+                                break
+                        
+                        if detection is not None:
+                            detection = (global_x, global_y, bw, bh, bc)
+                    
                     if detections_list:
                         mapped = []
+                        roi_blocked = 0
                         for d in detections_list:
-                            mapped.append((d[0] + offx, d[1] + offy, d[2], d[3], d[4], d[5]))
-                        detections_list = mapped
+                            global_x = d[0] + offx
+                            global_y = d[1] + offy
+                            
+                            in_dead_zone = False
+                            for zone in dead_zones:
+                                if zone['x1'] <= global_x <= zone['x2'] and zone['y1'] <= global_y <= zone['y2']:
+                                    in_dead_zone = True
+                                    roi_blocked += 1
+                                    break
+                            
+                            if not in_dead_zone:
+                                mapped.append((global_x, global_y, d[2], d[3], d[4], d[5]))
+                        
+                        detections_list = mapped if mapped else None
+                        if roi_blocked > 0:
+                            logger.warning(f"ROI dead zones blocked {roi_blocked} detections")
                     # Check if detection is viable
                     detection_viable = False
                     if detection is not None:
@@ -308,8 +334,7 @@ class StreamPipeline:
                         other_high_conf = [d for d in detections_list if len(d) >= 5 and d[4] > det_conf * 0.75]
                         
                         if len(other_high_conf) >= 2:
-                            if frame_count % 30 == 0:
-                                print(f"⚠ Multiple candidates: {len(detections_list)} total, {len(other_high_conf)} high-conf - REJECTING ALL")
+                            logger.warning(f"Multiple candidates: {len(detections_list)} total, {len(other_high_conf)} high-conf - REJECTING")
                             detection = None
                             detections_list = None
                 
