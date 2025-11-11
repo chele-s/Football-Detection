@@ -639,7 +639,7 @@ aws autoscaling put-scheduled-action \
 For deployment issues:
 - GitHub Issues: https://github.com/chele-s/Football-Detection/issues
 - AWS Support: Open a support ticket in AWS Console
-- Enterprise Support: contact@example.com
+- Enterprise Support: alvanezg1@gmail.com
 
 ---
 
