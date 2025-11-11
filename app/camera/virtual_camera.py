@@ -218,11 +218,14 @@ class VirtualCamera:
         self.stats['total_updates'] += 1
         self.frame_count += 1
         
-        if not detector_stable and not self.stability_mode_active:
-            self.stability_mode_active = True
-            self.stability_mode_cooldown = 45
-            self.position_filter.set_smoothing_level(0.35)
-            logger.debug("Detector unstable - activating stability mode")
+        if not detector_stable:
+            if not self.stability_mode_active:
+                self.stability_mode_active = True
+                self.stability_mode_cooldown = 60
+                self.position_filter.set_smoothing_level(0.25)
+                logger.debug("Detector unstable - activating stability mode")
+            else:
+                self.stability_mode_cooldown = min(60, self.stability_mode_cooldown + 2)
         
         if self.stability_mode_active:
             self.stability_mode_cooldown -= 1

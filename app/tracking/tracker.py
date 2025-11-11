@@ -178,6 +178,14 @@ class BallTracker:
         if self.stability_lock > 0:
             self.stability_lock -= 1
         
+        multiple_candidates = detections_list and len(detections_list) >= 3
+        if multiple_candidates and is_stable:
+            high_conf_count = sum(1 for d in detections_list if len(d) >= 5 and d[4] > 0.6)
+            if high_conf_count >= 3:
+                logger.debug(f"Multiple high-confidence candidates detected ({high_conf_count}), ignoring all")
+                detection = None
+                detections_list = None
+        
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             
@@ -229,7 +237,7 @@ class BallTracker:
                 base_distance = 180.0
                 velocity_factor = min(vmag * 2.5, 800.0)
                 lost_relaxation = min(self.lost_frames * 150.0, 600.0)
-                erratic_penalty = 80.0 if detector_erratic else 0.0
+                erratic_penalty = 120.0 if detector_erratic else 0.0
                 allowed_distance = base_distance + velocity_factor + lost_relaxation - erratic_penalty
                 
                 dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
@@ -261,7 +269,7 @@ class BallTracker:
                     base_threshold = 15.0
                     lost_bonus = min(self.lost_frames * 8.0, 40.0)
                     confidence_bonus = max(0, (confidence - 0.6) * 25.0)
-                    erratic_penalty = 8.0 if detector_erratic else 0.0
+                    erratic_penalty = 10.0 if detector_erratic else 0.0
                     gate_threshold = base_threshold + lost_bonus + confidence_bonus - erratic_penalty
                     
                     if maha > gate_threshold:
@@ -286,7 +294,7 @@ class BallTracker:
                 
                 current_strength = min(self.consecutive_detections / 15.0, 1.0)
                 base_noise = 3.0 + (7.0 * (1.0 - current_strength))
-                erratic_noise_boost = 4.0 if detector_erratic else 0.0
+                erratic_noise_boost = 6.0 if detector_erratic else 0.0
                 target_noise = base_noise + erratic_noise_boost
                 self.kalman.set_measurement_noise(target_noise)
                 
@@ -406,22 +414,39 @@ class BallTracker:
         return z_score_x > 3.0 or z_score_y > 3.0
     
     def _is_detector_erratic(self) -> bool:
-        if len(self.movement_history) < 8:
+        if len(self.movement_history) < 6:
             return False
         
         recent_movements = list(self.movement_history)[-8:]
         variance = np.var(recent_movements)
         mean_movement = np.mean(recent_movements)
         
-        if variance > 800.0:
+        if variance > 600.0:
             return True
         
-        if mean_movement > 80.0 and variance > 400.0:
+        if mean_movement > 70.0 and variance > 350.0:
             return True
         
-        consecutive_large_jumps = sum(1 for m in recent_movements[-5:] if m > 100.0)
+        consecutive_large_jumps = sum(1 for m in recent_movements[-5:] if m > 85.0)
         if consecutive_large_jumps >= 3:
             return True
+        
+        direction_changes = 0
+        if len(self.position_history) >= 5:
+            recent_pos = list(self.position_history)[-5:]
+            for i in range(len(recent_pos) - 2):
+                dx1 = recent_pos[i+1][0] - recent_pos[i][0]
+                dx2 = recent_pos[i+2][0] - recent_pos[i+1][0]
+                dy1 = recent_pos[i+1][1] - recent_pos[i][1]
+                dy2 = recent_pos[i+2][1] - recent_pos[i+1][1]
+                
+                if abs(dx1) > 10 and abs(dx2) > 10 and (dx1 * dx2 < 0):
+                    direction_changes += 1
+                if abs(dy1) > 10 and abs(dy2) > 10 and (dy1 * dy2 < 0):
+                    direction_changes += 1
+            
+            if direction_changes >= 3:
+                return True
         
         return False
     

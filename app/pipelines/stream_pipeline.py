@@ -248,21 +248,30 @@ class StreamPipeline:
                 # Spatial filter: exclude stands/lights regions (top + sides)
                 # ONLY apply when ROI is NOT active AND zoom < 1.4
                 # When zoomed in or ROI active, we're already focused on playing field
-                apply_spatial_filter = (not roi_active) and (current_zoom_level < 1.3)
+                apply_spatial_filter = (not roi_active) and (current_zoom_level < 1.2) and (frames_tracking < 10)
                 
                 if apply_spatial_filter:
                     if detection is not None:
                         bx, by, bw, bh, bconf = detection
-                        if by < reader.height * 0.22 or bx < reader.width * 0.12 or bx > reader.width * 0.88:
+                        if by < reader.height * 0.20 or bx < reader.width * 0.10 or bx > reader.width * 0.90:
                             detection = None
                     
                     if detections_list:
                         filtered_dets = []
                         for d in detections_list:
                             dx, dy = d[0], d[1]
-                            if dy >= reader.height * 0.22 and dx >= reader.width * 0.12 and dx <= reader.width * 0.88:
+                            if dy >= reader.height * 0.20 and dx >= reader.width * 0.10 and dx <= reader.width * 0.90:
                                 filtered_dets.append(d)
                         detections_list = filtered_dets if filtered_dets else None
+                
+                if detections_list and len(detections_list) >= 4:
+                    if detection is not None:
+                        det_conf = detection[4]
+                        other_high_conf = [d for d in detections_list if len(d) >= 5 and d[4] > det_conf * 0.75]
+                        
+                        if len(other_high_conf) >= 2:
+                            detection = None
+                            detections_list = None
                 
                 t_tracking_start = time.time()
                 track_result = self.tracker.update(detection, detections_list)
