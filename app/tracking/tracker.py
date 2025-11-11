@@ -186,7 +186,8 @@ class BallTracker:
             self.chaos_cooldown -= 1
             if self.chaos_cooldown == 0:
                 self.chaos_mode = False
-                logger.info("Chaos mode deactivated")
+                self.last_accepted_position = None
+                logger.info("Chaos mode deactivated - resetting position memory")
         
         multiple_candidates = detections_list and len(detections_list) >= 3
         if multiple_candidates and is_stable:
@@ -199,15 +200,23 @@ class BallTracker:
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             
-            if self.last_accepted_position is not None and is_stable:
+            if self.last_accepted_position is not None:
                 jump_dist = float(np.sqrt((x_center - self.last_accepted_position[0])**2 + (y_center - self.last_accepted_position[1])**2))
-                jump_threshold = 150.0
+                
+                if is_stable:
+                    jump_threshold = 120.0
+                else:
+                    jump_threshold = 180.0
                 
                 if jump_dist > jump_threshold:
-                    logger.warning(f"HUGE JUMP detected: {jump_dist:.0f}px - ACTIVATING CHAOS MODE")
+                    logger.warning(f"HUGE JUMP detected: {jump_dist:.0f}px (threshold={jump_threshold:.0f}) - CHAOS MODE")
                     self.chaos_mode = True
-                    self.chaos_cooldown = 90
+                    self.chaos_cooldown = 120
                     self.stats['jump_rejections'] += 1
+                    detection = None
+                
+                if self.chaos_mode and jump_dist > 80.0:
+                    logger.debug(f"Chaos mode: rejecting detection at {jump_dist:.0f}px")
                     detection = None
             
             if detection is not None and self.stability_lock > 0 and self.kalman.initialized:

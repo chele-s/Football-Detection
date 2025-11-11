@@ -221,18 +221,24 @@ class VirtualCamera:
         if not detector_stable:
             if not self.stability_mode_active:
                 self.stability_mode_active = True
-                self.stability_mode_cooldown = 90
-                self.position_filter.set_smoothing_level(0.15)
-                logger.warning("Detector unstable - ULTRA STABILITY MODE")
+                self.stability_mode_cooldown = 120
+                self.position_filter.set_smoothing_level(0.08)
+                if self.use_pid:
+                    self.pid_x.output_limits = (-100, 100)
+                    self.pid_y.output_limits = (-100, 100)
+                logger.warning("Detector unstable - ULTRA STABILITY MODE (smoothing=0.08)")
             else:
-                self.stability_mode_cooldown = min(90, self.stability_mode_cooldown + 3)
+                self.stability_mode_cooldown = min(120, self.stability_mode_cooldown + 5)
         
         if self.stability_mode_active:
             self.stability_mode_cooldown -= 1
             if self.stability_mode_cooldown <= 0:
                 self.stability_mode_active = False
                 self.position_filter.set_smoothing_level(self.base_min_cutoff)
-                logger.debug("Stability mode deactivated")
+                if self.use_pid:
+                    self.pid_x.output_limits = (-500, 500)
+                    self.pid_y.output_limits = (-500, 500)
+                logger.debug("Stability mode deactivated - normal smoothing restored")
         
         current_target = np.array([target_x, target_y])
         current_velocity = current_target - self.last_target

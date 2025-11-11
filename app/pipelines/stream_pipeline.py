@@ -400,6 +400,7 @@ class StreamPipeline:
                         target_zoom_level = 1.0
                         roi_active = False
                         roi_stable_frames = 0
+                        frames_tracking = 0
                     elif is_tracking and frames_tracking >= 8:
                         if vmag > 900:
                             target_zoom_level = 1.15
