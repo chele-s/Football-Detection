@@ -152,11 +152,15 @@ class BallTracker:
             'predictions_used': 0,
             'noise_adaptations': 0,
             'outliers_rejected': 0,
-            'erratic_detections': 0
+            'erratic_detections': 0,
+            'jump_rejections': 0
         }
         
         self.stability_lock = 0
         self.stability_lock_max = 20
+        self.chaos_mode = False
+        self.chaos_cooldown = 0
+        self.last_accepted_position = None
         
         logger.info(f"BallTracker initialized: max_lost={max_lost_frames}, min_conf={min_confidence}")
     
@@ -178,6 +182,12 @@ class BallTracker:
         if self.stability_lock > 0:
             self.stability_lock -= 1
         
+        if self.chaos_cooldown > 0:
+            self.chaos_cooldown -= 1
+            if self.chaos_cooldown == 0:
+                self.chaos_mode = False
+                logger.info("Chaos mode deactivated")
+        
         multiple_candidates = detections_list and len(detections_list) >= 3
         if multiple_candidates and is_stable:
             high_conf_count = sum(1 for d in detections_list if len(d) >= 5 and d[4] > 0.6)
@@ -189,7 +199,18 @@ class BallTracker:
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
             
-            if self.stability_lock > 0 and self.kalman.initialized:
+            if self.last_accepted_position is not None and is_stable:
+                jump_dist = float(np.sqrt((x_center - self.last_accepted_position[0])**2 + (y_center - self.last_accepted_position[1])**2))
+                jump_threshold = 150.0
+                
+                if jump_dist > jump_threshold:
+                    logger.warning(f"HUGE JUMP detected: {jump_dist:.0f}px - ACTIVATING CHAOS MODE")
+                    self.chaos_mode = True
+                    self.chaos_cooldown = 90
+                    self.stats['jump_rejections'] += 1
+                    detection = None
+            
+            if detection is not None and self.stability_lock > 0 and self.kalman.initialized:
                 pred_x, pred_y = float(self.kalman.x[0, 0]), float(self.kalman.x[1, 0])
                 dist_to_pred = float(np.sqrt((x_center - pred_x)**2 + (y_center - pred_y)**2))
                 lock_threshold = 80.0
@@ -300,6 +321,8 @@ class BallTracker:
                 
                 if is_very_stable and movement < 5.0:
                     self.stability_lock = self.stability_lock_max
+                
+                self.last_accepted_position = (x_center, y_center)
                 
                 if self.adaptive_noise and len(self.position_history) >= 5:
                     recent_positions = list(self.position_history)[-5:]
@@ -562,6 +585,7 @@ class BallTracker:
             'acceleration': acceleration,
             'kalman_stable': self.kalman.is_stable(),
             'track_id': self.track_id,
+            'chaos_mode': self.chaos_mode,
             'stats': self.stats.copy()
         }
     

@@ -221,11 +221,11 @@ class VirtualCamera:
         if not detector_stable:
             if not self.stability_mode_active:
                 self.stability_mode_active = True
-                self.stability_mode_cooldown = 60
-                self.position_filter.set_smoothing_level(0.25)
-                logger.debug("Detector unstable - activating stability mode")
+                self.stability_mode_cooldown = 90
+                self.position_filter.set_smoothing_level(0.15)
+                logger.warning("Detector unstable - ULTRA STABILITY MODE")
             else:
-                self.stability_mode_cooldown = min(60, self.stability_mode_cooldown + 2)
+                self.stability_mode_cooldown = min(90, self.stability_mode_cooldown + 3)
         
         if self.stability_mode_active:
             self.stability_mode_cooldown -= 1

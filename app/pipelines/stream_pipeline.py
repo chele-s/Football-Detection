@@ -363,6 +363,7 @@ class StreamPipeline:
                     
                     state = self.tracker.get_state()
                     vmag = state['velocity_magnitude'] if state else 0.0
+                    chaos_mode = state.get('chaos_mode', False)
                     
                     detector_stable = True
                     if state and 'stats' in state:
@@ -371,6 +372,10 @@ class StreamPipeline:
                         if total > 0:
                             erratic_rate = erratic / total
                             detector_stable = erratic_rate < 0.08
+                    
+                    if chaos_mode:
+                        detector_stable = False
+                        logger.warning("CHAOS MODE ACTIVE - camera stability enforced")
                     
                     use_x, use_y = x, y
                     
@@ -391,7 +396,11 @@ class StreamPipeline:
                     vhx, vhy = self.tracker.get_velocity()
                     crop_coords = self.virtual_camera.update(safe_x, safe_y, time.time(), velocity_hint=(vhx, vhy), detector_stable=detector_stable)
                     
-                    if is_tracking and frames_tracking >= 8:
+                    if chaos_mode:
+                        target_zoom_level = 1.0
+                        roi_active = False
+                        roi_stable_frames = 0
+                    elif is_tracking and frames_tracking >= 8:
                         if vmag > 900:
                             target_zoom_level = 1.15
                         elif vmag > 600:
