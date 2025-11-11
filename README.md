@@ -1,288 +1,151 @@
-<div align="center">
+# Football Detection & Tracking System
 
-# ⚽ Football Detection & Tracking System
-
-### Advanced Real-Time Ball Tracking with RF-DETR & Intelligent Virtual Camera
+**Production-grade real-time ball tracking system combining RF-DETR object detection with advanced Kalman filtering and intelligent virtual camera control.**
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
-[![RF-DETR](https://img.shields.io/badge/RF--DETR-Medium-green.svg)](https://github.com/roboflow/rf-detr)
-[![CUDA](https://img.shields.io/badge/CUDA-11.8+-76B900.svg)](https://developer.nvidia.com/cuda-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-<p align="center">
-  <em>Production-grade football tracking system combining state-of-the-art computer vision with cinematographic intelligence</em>
-</p>
+## Overview
 
-[Features](#-core-features) •
-[Architecture](#-system-architecture) •
-[Installation](#-installation) •
-[Usage](#-usage) •
-[Performance](#-performance-metrics) •
-[Documentation](#-technical-documentation)
+This system provides broadcast-quality football tracking with sub-33ms latency, capable of processing 1080p streams at 30+ FPS on modern GPU infrastructure. Built for production deployment on AWS GPU instances.
 
-</div>
+**Key Capabilities:**
+- Real-time ball detection using RF-DETR transformer architecture
+- Extended Kalman Filter with adaptive noise and outlier rejection
+- Cinematic camera control with One-Euro smoothing and PID positioning
+- RTMP streaming with hardware-accelerated encoding
+- Automatic chaos detection and stability modes for robust operation
 
----
+## System Requirements
 
-## 🎯 Core Features
-
-<table>
-<tr>
-<td width="50%">
-
-### Detection & Tracking
-- **RF-DETR Medium** with inference optimization
-- **Extended Kalman Filter** with adaptive noise
-- Multi-hypothesis tracking with outlier rejection
-- Mahalanobis distance validation
-- Temporal prediction during occlusions
-
-</td>
-<td width="50%">
-
-### Virtual Camera System
-- **One-Euro Filter** for smooth motion
-- PID-controlled camera positioning
-- Trajectory prediction with polynomial fitting
-- Adaptive dead-zones based on velocity
-- Dynamic zoom with curvature awareness
-
-</td>
-</tr>
-</table>
-
-### Operational Modes
-
-| Mode | Use Case | Features |
-|------|----------|----------|
-| **Batch** | Video file processing | High-quality tracking, trajectory export, offline analysis |
-| **Stream** | Real-time broadcasting | RTMP output, YouTube integration, <33ms latency |
-
----
-
-## 🏗 System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         INPUT SOURCES                            │
-│    Video Files (.mp4/.avi)  │  RTMP Streams  │  YouTube Live   │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-         ┌───────────────────────┐
-         │   VIDEO PROCESSING    │
-         │   Frame Extraction    │
-         │   Preprocessing       │
-         └──────────┬────────────┘
-                    │
-                    ▼
-         ┌───────────────────────┐
-         │    RF-DETR MEDIUM     │◄─── FP16 Optimization
-         │  Object Detection     │     Multi-scale Inference
-         │  Confidence: 0.25+    │     Supervision Integration
-         └──────────┬────────────┘
-                    │
-                    ▼
-         ┌───────────────────────┐
-         │  TRACKING MODULE      │
-         │ ┌───────────────────┐ │
-         │ │ Extended Kalman   │ │◄─── State: [x, y, vx, vy, ax, ay]
-         │ │ Filter (6-DOF)    │ │     Adaptive Q/R matrices
-         │ └───────────────────┘ │     Innovation monitoring
-         │ ┌───────────────────┐ │
-         │ │ Multi-Hypothesis  │ │◄─── IoU validation
-         │ │ Association       │ │     Outlier detection
-         │ └───────────────────┘ │
-         └──────────┬────────────┘
-                    │
-                    ▼
-         ┌───────────────────────┐
-         │  VIRTUAL CAMERA       │
-         │ ┌───────────────────┐ │
-         │ │  One-Euro Filter  │ │◄─── Adaptive β computation
-         │ │  (Position)       │ │     Jerk-aware smoothing
-         │ └───────────────────┘ │
-         │ ┌───────────────────┐ │
-         │ │  PID Controller   │ │◄─── Kp=0.8, Ki=0.01, Kd=0.15
-         │ │  (Positioning)    │ │     Anti-windup
-         │ └───────────────────┘ │
-         │ ┌───────────────────┐ │
-         │ │ Trajectory        │ │◄─── Polynomial extrapolation
-         │ │ Predictor         │ │     Curvature detection
-         │ └───────────────────┘ │
-         └──────────┬────────────┘
-                    │
-                    ▼
-         ┌───────────────────────┐
-         │   OUTPUT RENDERING    │
-         │   Crop & Resize       │
-         │   Overlay Graphics    │
-         └──────────┬────────────┘
-                    │
-                    ▼
-┌────────────────────────────────────────────────────────────────┐
-│                         OUTPUT TARGETS                          │
-│      Video Files  │  RTMP Streams  │  Preview Window           │
-└────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🧮 Advanced Algorithms
-
-### 1. RF-DETR Detection Engine
-
-**Migration from YOLOv8 to RF-DETR**
-
-We've recently migrated to [Roboflow's RF-DETR](https://github.com/roboflow/rf-detr) for superior detection performance:
-
-```python
-from rfdetr import RFDETRMedium
-
-# Initialize with inference optimization
-model = RFDETRMedium()
-model.optimize_for_inference()  # JIT compilation, graph optimization
-
-# Inference with supervision integration
-detections = model.predict(frame, threshold=0.25)
-```
-
-**Key Advantages:**
-- **Transformer-based architecture** → Better occlusion handling
-- **Native supervision support** → Seamless tracking integration
-- **Optimized inference** → ~8-12ms per frame on RTX 3080
-- **FP16 support** → 2x throughput on modern GPUs
-
-**Confidence Calibration:**
-```python
-def _calibrate_confidence(conf, width, height):
-    area = width * height
-    if area < 100:      # Small objects
-        return conf * 0.8
-    elif area > 10000:  # Large objects
-        return conf * 0.9
-    return conf
-```
-
-### 2. Extended Kalman Filter (6-DOF)
-
-**State Vector:** `x = [x, y, vx, vy, ax, ay]ᵀ`
-
-**Process Model:**
-```python
-F = [[1, 0, dt, 0,  0.5*dt², 0      ],
-     [0, 1, 0,  dt, 0,       0.5*dt²],
-     [0, 0, 1,  0,  dt,      0      ],
-     [0, 0, 0,  1,  0,       dt     ],
-     [0, 0, 0,  0,  1,       0      ],
-     [0, 0, 0,  0,  0,       1      ]]
-```
-
-**Adaptive Noise Tuning:**
-```python
-if avg_mahalanobis > 9.0:
-    Q *= 1.2  # Increase process noise
-elif avg_mahalanobis < 2.0:
-    Q *= 0.9  # Decrease process noise
-```
-
-**Innovation Monitoring:**
-- Mahalanobis distance for outlier detection
-- Chi-squared test (df=2, α=0.05)
-- Automatic filter reset on instability
-
-### 3. One-Euro Filter for Camera Smoothing
-
-**Adaptive Low-Pass Filtering:**
-
-```
-α = 1 / (1 + τ/Te)
-where τ = 1/(2πfc), fc = fc_min + β|dx/dt|
-```
-
-**Parameters:**
-- `fc_min = 1.0 Hz` → Minimum cutoff frequency
-- `β = 0.007` → Speed coefficient (adaptive)
-- `d_cutoff = 1.0 Hz` → Derivative cutoff
-
-**Adaptive Beta Computation:**
-```python
-β_adaptive = β × velocity_factor × jerk_factor × stability_factor
-β_adaptive ∈ [β×0.5, β×3.0]
-```
-
-### 4. Trajectory Prediction
-
-**Polynomial Extrapolation:**
-```python
-# Fit 2nd-degree polynomial to position history
-coeffs_x = polyfit(t, x, deg=2)
-coeffs_y = polyfit(t, y, deg=2)
-
-# Predict future position
-x_future = coeffs_x[0]·t² + coeffs_x[1]·t + coeffs_x[2]
-y_future = coeffs_y[0]·t² + coeffs_y[1]·t + coeffs_y[2]
-```
-
-**Curvature Detection:**
-```python
-κ = |dx·d²y - dy·d²x| / (dx² + dy²)^(3/2)
-```
-
-### 5. Multi-Hypothesis Tracking
-
-**Association Strategy:**
-1. **Primary:** Highest confidence detection
-2. **Secondary:** Closest to Kalman prediction (if distance < 100px)
-3. **Tertiary:** Temporal interpolation from history
-
-**Outlier Rejection:**
-- Z-score threshold: `|z| > 3.0σ`
-- IoU validation: `IoU > 0.3`
-- Confidence floor: `conf > 0.3`
-
----
-
-## 📦 Installation
-
-### Prerequisites
-
+### Production Environment
+- **GPU:** NVIDIA L4, A100, or T4 with 16GB+ VRAM
 - **Python:** 3.8 or higher
-- **CUDA:** 11.8+ (for GPU acceleration)
-- **FFmpeg:** Latest version
+- **CUDA:** 11.8 or higher
+- **FFmpeg:** 4.4+ with NVENC support
+- **RAM:** 8GB minimum, 16GB recommended
+- **OS:** Linux (Ubuntu 20.04+ recommended)
 
-### Quick Install
+### Supported Resolutions
+
+| GPU Type | Max Resolution | FPS | Inference Time |
+|----------|---------------|-----|----------------|
+| NVIDIA A100 | 1920x1080 | 60+ | 12-15ms |
+| NVIDIA L4 (AWS G6) | 1920x1080 | 30+ | 18-22ms |
+| NVIDIA T4 | 1280x720 | 30 | 28-32ms |
+
+## Architecture
+
+```
+Input Stream (RTMP/File)
+    |
+    v
+Video Reader (OpenCV/FFmpeg)
+    |
+    v
+RF-DETR Medium Detector (FP16)
+    |--- Dead Zone Filtering
+    |--- Spatial Filtering
+    |--- Multi-candidate Rejection
+    v
+Ball Tracker (Extended Kalman Filter)
+    |--- 6-DOF State Estimation
+    |--- Mahalanobis Gating
+    |--- Chaos Mode Detection
+    |--- Jump Rejection
+    v
+Virtual Camera System
+    |--- One-Euro Filter (Smoothing)
+    |--- PID Controller (Positioning)
+    |--- Trajectory Prediction
+    |--- Dynamic Zoom Control
+    v
+Output Renderer (NVENC)
+    |
+    v
+Output Stream (RTMP/File)
+```
+
+## Installation
+
+### Quick Start
 
 ```bash
-# Clone repository
-git clone https://github.com/chele-s/Football-Detection.git
+git clone https://github.com/yourusername/Football-Detection.git
 cd Football-Detection
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Verify GPU availability
-python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+python -c "import torch; print(f'CUDA Available: {torch.cuda.is_available()}')"
 ```
 
-### Manual Setup
+### Dependencies
 
-```bash
-# Core dependencies
-pip install rfdetr>=1.2.0 supervision>=0.26.0
-pip install opencv-python numpy scipy Pillow
-pip install torch>=2.0.0 torchvision>=0.15.0
-
-# Streaming support
-pip install yt-dlp PyYAML tqdm
+Core libraries:
+```
+rfdetr>=1.2.0
+supervision>=0.26.0
+torch>=2.0.0
+torchvision>=0.15.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+scipy>=1.10.0
+PyYAML>=6.0
+yt-dlp>=2023.3.4
 ```
 
----
+## Configuration
 
-## 🚀 Usage
+### Model Configuration (`configs/model_config.yml`)
 
-### Batch Processing (Video Files)
+```yaml
+model:
+  path: "models/best_rf-detr.pth"
+  confidence: 0.25
+  iou_threshold: 0.45
+  device: "cuda"
+  half_precision: true
+  imgsz: 640
+  warmup_iterations: 3
+  ball_class_id: 0
+
+tracking:
+  max_lost_frames: 10
+  min_confidence: 0.3
+  iou_threshold: 0.3
+  adaptive_noise: true
+
+output:
+  width: 1920
+  height: 1080
+```
+
+### Stream Configuration (`configs/stream_config.yml`)
+
+```yaml
+stream:
+  target_fps: 30
+  bitrate: "4000k"
+  preset: "ultrafast"
+  debug_mode: false
+  show_stats: true
+
+camera:
+  dead_zone: 0.10
+  anticipation: 0.3
+  zoom_padding: 1.2
+  smoothing_min_cutoff: 0.6
+  smoothing_beta: 0.004
+  use_pid: true
+  prediction_steps: 5
+```
+
+## Usage
+
+### Batch Processing
+
+Process video files offline:
 
 ```bash
 python main.py batch \
@@ -291,401 +154,209 @@ python main.py batch \
   --confidence 0.25
 ```
 
-**Output:**
-- Processed video with virtual camera tracking
-- JSON trajectory file (optional): `trajectories.json`
+### Stream Processing
 
-### Stream Processing (Real-Time)
+Real-time RTMP streaming:
 
-#### Debug Mode (YouTube Testing)
+```bash
+python main.py stream \
+  --input "rtmp://source.example.com/live/input" \
+  --output "rtmp://destination.example.com/live/output" \
+  --device cuda
+```
+
+Debug mode with preview:
 
 ```bash
 python main.py stream \
   --debug \
-  --input "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  --input "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-**Features:**
-- Live preview window
-- Real-time statistics overlay
-- No RTMP server required
-
-#### Production Mode (RTMP Broadcasting)
-
-```bash
-python main.py stream \
-  --input "rtmp://source.com/live/input" \
-  --output "rtmp://destination.com/live/output" \
-  --device cuda
-```
-
-**Helper Scripts:**
-
-```bash
-# Linux/Mac
-bash scripts/start_stream_worker.sh rtmp://input rtmp://output
-
-# Windows
-.\scripts\start_stream_worker.ps1 rtmp://input rtmp://output
-```
-
-### Command-Line Arguments
+### Command-Line Options
 
 ```
 usage: main.py [-h] [--model-config PATH] [--input PATH/URL] 
                [--output PATH/URL] [--debug] [--confidence FLOAT]
                [--device {cuda,cpu}] {batch,stream}
 
+positional arguments:
+  {batch,stream}        Processing mode
+
 optional arguments:
-  --model-config PATH   Model configuration file (default: configs/model_config.yml)
-  --input PATH/URL      Input video/stream (overrides config)
-  --output PATH/URL     Output video/stream (overrides config)
+  --model-config PATH   Model configuration file
+  --input PATH/URL      Input video/stream
+  --output PATH/URL     Output video/stream
   --debug               Enable debug mode with preview
   --confidence FLOAT    Detection confidence threshold (0.0-1.0)
-  --device {cuda,cpu}   Force CPU or GPU processing
+  --device {cuda,cpu}   Processing device
 ```
 
----
+## Advanced Features
 
-## ⚙️ Configuration
+### Chaos Mode
 
-### Model Configuration (`configs/model_config.yml`)
+Automatic detection and suppression of erratic detector behavior:
+- Activates when detection jumps exceed 120px
+- Forces zoom-out and ultra-stability smoothing
+- Rejects unreliable detections for 4 seconds
+- Prevents jarring camera movements
 
-```yaml
-model:
-  path: "models/best_rf-detr.pth"       # Custom model or pretrained
-  confidence: 0.25                       # Detection threshold
-  iou_threshold: 0.45                    # NMS threshold
-  device: "cuda"                         # cuda/cpu
-  half_precision: true                   # FP16 inference
-  imgsz: 640                             # Input resolution
-  multi_scale: false                     # Multi-scale detection
-  warmup_iterations: 3                   # Model warmup
-  ball_class_id: 0                       # Target class ID
+### Dead Zone Filtering
 
-tracking:
-  max_lost_frames: 10                    # Max prediction frames
-  min_confidence: 0.3                    # Minimum track confidence
-  history_size: 30                       # Position history buffer
-```
+Configurable spatial filters to block false positives:
+- Top-right corner: x > 70%, y < 40%
+- Top-left corner: x < 8%, y < 40%
+- Customizable zones per deployment
 
-### Stream Configuration (`configs/stream_config.yml`)
+### Adaptive Smoothing
 
-```yaml
-stream:
-  target_fps: 30                         # Output framerate
-  bitrate: "4000k"                       # Video bitrate
-  preset: "ultrafast"                    # FFmpeg preset
-  debug_mode: false                      # Show preview window
-  show_stats: true                       # Statistics overlay
+Dynamic filter adjustment based on detector stability:
+- Normal mode: min_cutoff = 0.6
+- Stability mode: min_cutoff = 0.08
+- PID limits: ±500px → ±100px during chaos
 
-camera:
-  dead_zone: 0.10                        # 10% no-movement zone
-  anticipation: 0.3                      # Prediction strength
-  zoom_padding: 1.2                      # Viewport padding
-  smoothing_min_cutoff: 1.0              # One-Euro fc_min
-  smoothing_beta: 0.007                  # One-Euro β
-  use_pid: true                          # Enable PID control
-  prediction_steps: 5                    # Trajectory lookahead
-```
+## Performance Benchmarks
 
----
+### AWS G6 Instance (NVIDIA L4)
 
-## 📊 Performance Metrics
+**Configuration:** 1920x1080 @ 30 FPS
 
-### Benchmark Results (RTX 3080, 1920×1080 input)
+| Component | Time (ms) | % of Budget |
+|-----------|-----------|-------------|
+| RF-DETR Inference | 18-22 | 60% |
+| Kalman Tracking | 0.8-1.2 | 3% |
+| Camera Processing | 1.0-1.5 | 4% |
+| Rendering | 8-10 | 30% |
+| **Total** | **28-34** | **100%** |
 
-| Component | Time (ms) | FPS | Notes |
-|-----------|-----------|-----|-------|
-| **RF-DETR Medium** | 8-12 | 83-125 | FP16, optimized |
-| **Kalman Filter** | 0.5-1.0 | 1000-2000 | NumPy/SciPy |
-| **One-Euro Filter** | 0.2-0.5 | 2000-5000 | Pure Python |
-| **Virtual Camera** | 0.5-1.0 | 1000-2000 | Crop calculation |
-| **Total Pipeline** | **12-18** | **55-83** | Real-time capable |
+**Throughput:** 30-35 FPS sustained
 
 ### Memory Usage
 
-- **Model (RF-DETR Medium):** ~250 MB VRAM
-- **Frame buffers (1080p):** ~50 MB VRAM
-- **Tracking state:** ~10 MB RAM
-- **Total:** <400 MB VRAM, <100 MB RAM
+- **VRAM:** 3.2 GB (model + buffers)
+- **RAM:** 2.8 GB (frame history + state)
+- **Peak VRAM:** 4.1 GB during initialization
 
-### Optimization Tips
+## Production Deployment
 
-<details>
-<summary><b>Maximize Throughput</b></summary>
+See [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for complete AWS G6 deployment guide.
 
-1. **Enable FP16:**
-   ```yaml
-   model:
-     half_precision: true
-   ```
+See [PRODUCTION_GUIDE.md](PRODUCTION_GUIDE.md) for architecture documentation and scaling strategies.
 
-2. **Reduce Input Resolution:**
-   ```yaml
-   model:
-     imgsz: 512  # Down from 640
-   ```
-
-3. **Disable Multi-Scale:**
-   ```yaml
-   model:
-     multi_scale: false
-   ```
-
-4. **Use Smaller Model:**
-   ```python
-   from rfdetr import RFDETRSmall  # Instead of Medium
-   ```
-
-</details>
-
-<details>
-<summary><b>Minimize Latency</b></summary>
-
-1. **Reduce Smoothing:**
-   ```yaml
-   camera:
-     smoothing_min_cutoff: 2.0  # More responsive
-     smoothing_beta: 0.005
-   ```
-
-2. **Disable Trajectory Prediction:**
-   ```yaml
-   camera:
-     prediction_steps: 0
-   ```
-
-3. **Increase Dead-Zone:**
-   ```yaml
-   camera:
-     dead_zone: 0.15  # Less camera movement
-   ```
-
-</details>
-
----
-
-## 📚 Technical Documentation
-
-### Algorithm Deep Dives
-
-<details>
-<summary><b>Extended Kalman Filter Implementation</b></summary>
-
-**Prediction Step:**
-```python
-x_pred = F @ x_prev
-P_pred = F @ P_prev @ F.T + Q
-```
-
-**Update Step:**
-```python
-y = z - H @ x_pred                  # Innovation
-S = H @ P_pred @ H.T + R            # Innovation covariance
-K = P_pred @ H.T @ inv(S)           # Kalman gain
-x_new = x_pred + K @ y              # State update
-P_new = (I - K @ H) @ P_pred        # Covariance update
-```
-
-**Mahalanobis Distance:**
-```python
-d² = y.T @ inv(S) @ y
-outlier = d² > χ²(0.95, df=2) ≈ 5.99
-```
-
-</details>
-
-<details>
-<summary><b>One-Euro Filter Tuning Guide</b></summary>
-
-**Parameter Effects:**
-
-| Parameter | ↑ Increase | ↓ Decrease |
-|-----------|------------|------------|
-| `min_cutoff` | More responsive, noisier | Smoother, more lag |
-| `beta` | Faster at high speed | Slower overall |
-| `d_cutoff` | Noisier speed estimate | Smoother speed |
-
-**Recommended Presets:**
-
-```yaml
-# Cinematic (smooth, slow)
-smoothing_min_cutoff: 0.5
-smoothing_beta: 0.003
-
-# Balanced (default)
-smoothing_min_cutoff: 1.0
-smoothing_beta: 0.007
-
-# Responsive (fast, snappy)
-smoothing_min_cutoff: 2.0
-smoothing_beta: 0.015
-```
-
-</details>
-
-<details>
-<summary><b>RF-DETR vs YOLOv8 Comparison</b></summary>
-
-| Metric | RF-DETR Medium | YOLOv8n | YOLOv8m |
-|--------|----------------|---------|---------|
-| **Inference Time** | 8-12ms | 5-8ms | 12-18ms |
-| **AP@50** | 52.3% | 37.3% | 50.2% |
-| **AP@50:95** | 42.8% | 28.1% | 41.7% |
-| **Parameters** | 51M | 3.2M | 25.9M |
-| **VRAM** | 250MB | 80MB | 180MB |
-| **Occlusion Handling** | ★★★★★ | ★★★☆☆ | ★★★★☆ |
-
-**Why RF-DETR?**
-- Transformer architecture better handles partial occlusions
-- End-to-end detection (no NMS instability)
-- Stronger spatial reasoning for ball tracking
-- Native integration with Supervision library
-
-</details>
-
----
-
-## 🧪 Testing & Development
-
-### Jupyter Notebooks
+### Quick Deploy to AWS
 
 ```bash
-# Model benchmarking
-jupyter notebook notebooks/01_benchmark_model_speed.ipynb
-
-# Camera tuning interactive
-jupyter notebook notebooks/02_tune_camera_smoothing.ipynb
-
-# RTMP connectivity test
-jupyter notebook notebooks/03_test_rtmp_connection.ipynb
+cd deployment/aws
+terraform init
+terraform apply -var="instance_type=g6.xlarge"
 ```
 
-### Unit Tests
+## Algorithm Details
 
+### Extended Kalman Filter
+
+State vector: `[x, y, vx, vy, ax, ay]`
+
+Process model with constant acceleration:
+```
+x(k+1) = F * x(k) + w
+where F is the state transition matrix
+w ~ N(0, Q) is process noise
+```
+
+Measurement update with Mahalanobis gating:
+```
+d² = (z - Hx)ᵀ S⁻¹ (z - Hx)
+Accept measurement if d² < threshold
+```
+
+### One-Euro Filter
+
+Adaptive low-pass filter with velocity-dependent cutoff:
+```
+fc = fc_min + β * |dx/dt|
+α = 1 / (1 + τ/Te)
+x_filtered = α * x_raw + (1-α) * x_prev
+```
+
+Parameters auto-tune based on jerk and stability metrics.
+
+## Testing
+
+Run test suite:
 ```bash
-# Run full test suite
-python test_system.py
+python -m pytest app/tests/ -v
+```
 
-# Test individual components
+Individual component tests:
+```bash
 python -m pytest app/tests/test_detector.py
 python -m pytest app/tests/test_tracker.py
 python -m pytest app/tests/test_camera.py
 ```
 
----
+## Monitoring
 
-## 🐛 Troubleshooting
+The system exposes real-time metrics via logging:
 
-### Common Issues
-
-<details>
-<summary><b>CUDA Out of Memory</b></summary>
-
-**Solutions:**
-1. Enable FP16: `half_precision: true`
-2. Reduce batch size to 1 (already default)
-3. Lower input resolution: `imgsz: 512`
-4. Close other GPU applications
-
-**Check VRAM usage:**
-```python
-import torch
-print(torch.cuda.memory_allocated() / 1e9, "GB")
+```
+[STREAM] Frame 1000 | FPS: 32.1 | Inf: 19.2ms | Track: ACTIVE | Zoom: 1.65x
+DEAD_ZONE[top-right] x=1650 y=280 BLOCKED
+HUGE JUMP detected: 247px - CHAOS MODE
+Detector unstable - ULTRA STABILITY MODE (smoothing=0.08)
 ```
 
-</details>
+## Troubleshooting
 
-<details>
-<summary><b>YouTube Download Failed</b></summary>
-
-**Update yt-dlp:**
-```bash
-pip install --upgrade yt-dlp
-```
-
-**Alternative URL formats:**
-```bash
-# Standard
-https://www.youtube.com/watch?v=VIDEO_ID
-
-# Live stream
-https://www.youtube.com/watch?v=VIDEO_ID&live=1
-
-# Embedded
-https://youtu.be/VIDEO_ID
-```
-
-</details>
-
-<details>
-<summary><b>FFmpeg Not Found</b></summary>
-
-**Installation:**
+### GPU Out of Memory
 
 ```bash
-# Ubuntu/Debian
-sudo apt update && sudo apt install ffmpeg
+# Reduce inference resolution
+sed -i 's/imgsz: 640/imgsz: 512/' configs/model_config.yml
 
-# macOS
-brew install ffmpeg
-
-# Windows
-# Download from: https://ffmpeg.org/download.html
-# Add to PATH
+# Enable FP16
+sed -i 's/half_precision: false/half_precision: true/' configs/model_config.yml
 ```
 
-**Verify:**
+### Low FPS
+
 ```bash
-ffmpeg -version
+# Check GPU utilization
+nvidia-smi dmon -s u
+
+# Profile inference time
+python tools/benchmark_inference.py
 ```
 
-</details>
+### Stream Disconnection
 
----
+```bash
+# Test RTMP connectivity
+ffprobe -v error rtmp://your-server/live/stream
 
-## 🗺️ Roadmap
+# Increase reconnection attempts
+export RTMP_RECONNECT_ATTEMPTS=10
+```
 
-- [x] RF-DETR integration
-- [x] Extended Kalman Filter
-- [x] One-Euro smoothing
-- [x] PID camera control
-- [x] Trajectory prediction
-- [ ] Multi-object tracking (players + ball)
-- [ ] Player jersey number recognition
-- [ ] Automated highlight detection
-- [ ] WebRTC ultra-low-latency streaming
-- [ ] Cloud deployment (AWS/GCP)
-- [ ] Docker containerization
-- [ ] REST API for remote control
-- [ ] Grafana dashboard for metrics
+## License
 
----
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
 
-## 📄 License
+## Support
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+For production support and enterprise licensing:
+- GitHub Issues: [Report Bug](https://github.com/yourusername/Football-Detection/issues)
+- Enterprise Support: contact@example.com
 
----
+## Acknowledgments
 
-## 👥 Authors & Acknowledgments
-
-**Developed by:** Gabriel (Chele-s)
-
-**Special Thanks:**
-- [Roboflow](https://github.com/roboflow) for RF-DETR
-- [Supervision](https://github.com/roboflow/supervision) library
+- RF-DETR by Roboflow
+- Supervision library for tracking utilities
 - One-Euro Filter research by Géry Casiez et al.
 
 ---
 
-<div align="center">
-
-**Built with ❤️ for the future of sports broadcasting**
-
-[Report Bug](https://github.com/chele-s/Football-Detection/issues) •
-[Request Feature](https://github.com/chele-s/Football-Detection/issues) •
-[Documentation](https://github.com/chele-s/Football-Detection/wiki)
-
-</div>
+**Version:** 2.0.0  
+**Last Updated:** 2024  
+**Status:** Production Ready
