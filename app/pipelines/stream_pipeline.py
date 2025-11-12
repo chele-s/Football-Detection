@@ -170,11 +170,11 @@ class StreamPipeline:
         roi_last_valid_pos = None
         
         logger.info("Starting main loop... (Press 'q' to quit)")
-        logger.warning("="*60)
-        logger.warning(f"Frame resolution: {reader.width}x{reader.height}")
-        logger.warning(f"DEAD_ZONE[top-right]: x>{reader.width*0.70:.0f} AND y<{reader.height*0.40:.0f}")
-        logger.warning(f"DEAD_ZONE[top-left]: x<{reader.width*0.08:.0f} AND y<{reader.height*0.40:.0f}")
-        logger.warning("="*60)
+        logger.info("="*60)
+        logger.info(f"Frame resolution: {reader.width}x{reader.height}")
+        logger.debug(f"DEAD_ZONE[top-right]: x>{reader.width*0.65:.0f} AND y<{reader.height*0.45:.0f}")
+        logger.debug(f"DEAD_ZONE[top-left]: x<{reader.width*0.08:.0f} AND y<{reader.height*0.40:.0f}")
+        logger.info("="*60)
         
         try:
             while True:
@@ -212,7 +212,8 @@ class StreamPipeline:
                     detections_list = None
                 
                 dead_zones = [
-                    {'x1': reader.width * 0.70, 'y1': 0, 'x2': reader.width, 'y2': reader.height * 0.40, 'name': 'top-right'},
+                    # Expanded top-right corner to cover more area
+                    {'x1': reader.width * 0.65, 'y1': 0, 'x2': reader.width, 'y2': reader.height * 0.45, 'name': 'top-right'},
                     {'x1': 0, 'y1': 0, 'x2': reader.width * 0.08, 'y2': reader.height * 0.40, 'name': 'top-left'},
                 ]
                 
@@ -221,7 +222,6 @@ class StreamPipeline:
                     
                     for zone in dead_zones:
                         if zone['x1'] <= dx <= zone['x2'] and zone['y1'] <= dy <= zone['y2']:
-                            logger.warning(f"DEAD_ZONE[{zone['name']}] x={dx:.0f} y={dy:.0f} BLOCKED")
                             detection = None
                             break
                 
@@ -240,9 +240,6 @@ class StreamPipeline:
                         if not in_dead_zone:
                             filtered_detections.append(d)
                     detections_list = filtered_detections if filtered_detections else None
-                    
-                    if blocked_count > 0:
-                        logger.warning(f"Dead zones blocked {blocked_count}/{original_count} detections")
                 if use_roi:
                     if detection is not None:
                         bx, by, bw, bh, bc = detection
@@ -251,7 +248,6 @@ class StreamPipeline:
                         
                         for zone in dead_zones:
                             if zone['x1'] <= global_x <= zone['x2'] and zone['y1'] <= global_y <= zone['y2']:
-                                logger.warning(f"ROI_DEAD_ZONE[{zone['name']}] x={global_x:.0f} y={global_y:.0f} BLOCKED")
                                 detection = None
                                 break
                         
@@ -276,8 +272,6 @@ class StreamPipeline:
                                 mapped.append((global_x, global_y, d[2], d[3], d[4], d[5]))
                         
                         detections_list = mapped if mapped else None
-                        if roi_blocked > 0:
-                            logger.warning(f"ROI dead zones blocked {roi_blocked} detections")
                     # Check if detection is viable
                     detection_viable = False
                     if detection is not None:
@@ -375,7 +369,6 @@ class StreamPipeline:
                     
                     if chaos_mode:
                         detector_stable = False
-                        logger.warning("CHAOS MODE ACTIVE - camera stability enforced")
                     
                     use_x, use_y = x, y
                     
