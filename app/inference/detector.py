@@ -1,4 +1,4 @@
-"""
+    """
 Detector de balón optimizado usando RF-DETR.
 
 Optimizaciones para baja latencia:
@@ -14,7 +14,7 @@ import torch
 import logging
 import time
 import supervision as sv
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Union
 from pathlib import Path
 from collections import deque
 from PIL import Image
@@ -149,15 +149,33 @@ class BallDetector:
     
     def predict(
         self,
-        frame: np.ndarray,
+        frame: Union[np.ndarray, torch.Tensor],
         return_raw: bool = False,
         augment: bool = False
     ) -> List[Tuple[float, float, float, float, float, int]]:
         start_time = time.time()
         self.stats['total_inferences'] += 1
         
-        # Fast path: pass numpy array directly to RF-DETR (no PIL overhead)
-        if isinstance(frame, np.ndarray):
+        # GPU path: accept torch.Tensor directly (zero-copy, already in VRAM)
+        if isinstance(frame, torch.Tensor):
+            # Tensor should be [3, H, W] or [H, W, 3] in RGB, float [0..1]
+            if frame.dim() == 3:
+                if frame.shape[0] == 3:  # [3, H, W] → [H, W, 3]
+                    frame = frame.permute(1, 2, 0)
+                
+                # Ensure float [0..1]
+                if frame.dtype == torch.uint8:
+                    frame = frame.float() / 255.0
+                
+                # Convert to numpy for RF-DETR (TODO: RF-DETR native tensor support)
+                # This is a CPU copy, but only for the resized image (not original frame)
+                frame_rgb = (frame * 255).byte().cpu().numpy()
+                image = frame_rgb
+            else:
+                raise ValueError(f"Invalid tensor shape: {frame.shape}. Expected [3, H, W] or [H, W, 3]")
+        
+        # CPU path: numpy array
+        elif isinstance(frame, np.ndarray):
             # RF-DETR expects RGB, so flip BGR if needed
             if len(frame.shape) == 2:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
@@ -304,7 +322,7 @@ class BallDetector:
     
     def predict_ball_only(
         self,
-        frame: np.ndarray,
+        frame: Union[np.ndarray, torch.Tensor],
         ball_class_id: int = 0,
         use_temporal_filtering: bool = True,
         return_candidates: bool = False
