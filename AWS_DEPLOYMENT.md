@@ -644,6 +644,6 @@ For deployment issues:
 ---
 
 **Document Version:** 1.0  
-**Last Updated:** 2024  
+**Last Updated:** 2025
 **Instance Type:** AWS G6 (NVIDIA L4)
 
