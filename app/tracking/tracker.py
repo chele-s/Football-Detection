@@ -164,6 +164,11 @@ class BallTracker:
         self.last_accepted_position = None
         self.recent_jumps = deque(maxlen=5)  # Track recent jump distances
         
+        # Jitter/tremor detection
+        self.small_movements = deque(maxlen=10)  # Track small movements
+        self.jitter_mode = False
+        self.jitter_cooldown = 0
+        
         logger.info(f"BallTracker initialized: max_lost={max_lost_frames}, min_conf={min_confidence}")
     
     def update(
@@ -188,12 +193,19 @@ class BallTracker:
         if self.chaos_activation_cooldown > 0:
             self.chaos_activation_cooldown -= 1
         
+        # Jitter mode cooldown
+        if self.jitter_cooldown > 0:
+            self.jitter_cooldown -= 1
+            if self.jitter_cooldown == 0:
+                self.jitter_mode = False
+                self.small_movements.clear()
+        
         # Chaos mode duration countdown
         if self.chaos_cooldown > 0:
             self.chaos_cooldown -= 1
             if self.chaos_cooldown == 0:
                 self.chaos_mode = False
-                self.chaos_activation_cooldown = 75  # 2.5 seconds cooldown before next activation
+                self.chaos_activation_cooldown = 75  # Always apply cooldown after chaos mode
                 self.last_accepted_position = None
                 self.recent_jumps.clear()  # Clear jump history when chaos ends
         
@@ -214,18 +226,29 @@ class BallTracker:
                 # Track all jumps for pattern detection
                 self.recent_jumps.append(jump_dist)
                 
-                # Count large jumps in recent history (>100px is considered large)
-                large_jumps = sum(1 for j in self.recent_jumps if j > 100.0)
+                # Track small movements for jitter detection (movements between 15-60px)
+                if 15.0 < jump_dist < 60.0:
+                    self.small_movements.append(jump_dist)
                 
-                # More permissive jump thresholds
+                # Count large jumps in recent history (>120px is considered large, more permissive)
+                large_jumps = sum(1 for j in self.recent_jumps if j > 120.0)
+                
+                # Detect jitter: many small consecutive movements
+                if len(self.small_movements) >= 7:
+                    # If we have 7+ small movements in the last 10 detections
+                    self.jitter_mode = True
+                    self.jitter_cooldown = 45  # 1.5 seconds to stabilize
+                    logger.warning(f"JITTER DETECTED: {len(self.small_movements)} small movements - stabilizing")
+                
+                # Very permissive jump thresholds
                 if is_stable:
-                    jump_threshold = 180.0  # Increased from 120
+                    jump_threshold = 250.0  # Much more permissive (was 180)
                 else:
-                    jump_threshold = 250.0  # Increased from 180
+                    jump_threshold = 320.0  # Much more permissive (was 250)
                 
                 # Activate chaos mode if:
                 # 1. Single huge jump and not in cooldown, OR
-                # 2. Pattern of 3+ consecutive large jumps (>100px)
+                # 2. Pattern of 3+ consecutive large jumps (>120px)
                 should_activate_chaos = False
                 if self.chaos_activation_cooldown == 0:
                     if jump_dist > jump_threshold:
@@ -238,11 +261,18 @@ class BallTracker:
                 if should_activate_chaos:
                     self.chaos_mode = True
                     self.chaos_cooldown = 60  # 2 seconds duration
+                    self.chaos_activation_cooldown = 75  # Always set cooldown when activating
                     self.stats['jump_rejections'] += 1
                     detection = None
                 
                 # More permissive during chaos mode
-                if self.chaos_mode and jump_dist > 150.0:  # Increased from 80
+                if self.chaos_mode and jump_dist > 150.0:
+                    detection = None
+                
+                # During jitter mode, reject detections that cause small movements
+                # This stabilizes the camera during tremors
+                if self.jitter_mode and 15.0 < jump_dist < 65.0:
+                    logger.debug(f"Jitter mode: suppressing small movement {jump_dist:.1f}px")
                     detection = None
             
             if detection is not None and self.stability_lock > 0 and self.kalman.initialized:
@@ -602,6 +632,9 @@ class BallTracker:
         self.chaos_activation_cooldown = 0
         self.last_accepted_position = None
         self.recent_jumps.clear()
+        self.jitter_mode = False
+        self.jitter_cooldown = 0
+        self.small_movements.clear()
         self.stats = {
             'total_updates': 0,
             'successful_tracks': 0,
@@ -627,6 +660,7 @@ class BallTracker:
             'kalman_stable': self.kalman.is_stable(),
             'track_id': self.track_id,
             'chaos_mode': self.chaos_mode,
+            'jitter_mode': self.jitter_mode,
             'stats': self.stats.copy()
         }
     
