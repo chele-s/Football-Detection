@@ -659,9 +659,9 @@ Create CloudWatch dashboard with:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.0.0 | 2024 | Chaos mode, dead zones, production deployment |
-| 1.5.0 | 2024 | One-Euro filter, PID control |
-| 1.0.0 | 2024 | Initial RF-DETR implementation |
+| 2.0.0 | 2025 | Chaos mode, dead zones, production deployment |
+| 1.5.0 | 2025 | One-Euro filter, PID control |
+| 1.0.0 | 2025 | Initial RF-DETR implementation |
 
 ---
 
