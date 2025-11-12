@@ -162,6 +162,7 @@ class BallTracker:
         self.chaos_cooldown = 0
         self.chaos_activation_cooldown = 0  # Cooldown between activations
         self.last_accepted_position = None
+        self.recent_jumps = deque(maxlen=5)  # Track recent jump distances
         
         logger.info(f"BallTracker initialized: max_lost={max_lost_frames}, min_conf={min_confidence}")
     
@@ -192,8 +193,9 @@ class BallTracker:
             self.chaos_cooldown -= 1
             if self.chaos_cooldown == 0:
                 self.chaos_mode = False
-                self.chaos_activation_cooldown = 180  # 6 seconds cooldown before next activation
+                self.chaos_activation_cooldown = 75  # 2.5 seconds cooldown before next activation
                 self.last_accepted_position = None
+                self.recent_jumps.clear()  # Clear jump history when chaos ends
         
         multiple_candidates = detections_list and len(detections_list) >= 3
         if multiple_candidates and is_stable:
@@ -209,16 +211,33 @@ class BallTracker:
             if self.last_accepted_position is not None:
                 jump_dist = float(np.sqrt((x_center - self.last_accepted_position[0])**2 + (y_center - self.last_accepted_position[1])**2))
                 
+                # Track all jumps for pattern detection
+                self.recent_jumps.append(jump_dist)
+                
+                # Count large jumps in recent history (>100px is considered large)
+                large_jumps = sum(1 for j in self.recent_jumps if j > 100.0)
+                
                 # More permissive jump thresholds
                 if is_stable:
                     jump_threshold = 180.0  # Increased from 120
                 else:
                     jump_threshold = 250.0  # Increased from 180
                 
-                # Only activate chaos mode if not in cooldown period
-                if jump_dist > jump_threshold and self.chaos_activation_cooldown == 0:
+                # Activate chaos mode if:
+                # 1. Single huge jump and not in cooldown, OR
+                # 2. Pattern of 3+ consecutive large jumps (>100px)
+                should_activate_chaos = False
+                if self.chaos_activation_cooldown == 0:
+                    if jump_dist > jump_threshold:
+                        should_activate_chaos = True
+                        logger.warning(f"HUGE JUMP: {jump_dist:.0f}px - activating chaos mode")
+                    elif large_jumps >= 3:
+                        should_activate_chaos = True
+                        logger.warning(f"ERRATIC PATTERN: {large_jumps} large jumps detected - activating chaos mode")
+                
+                if should_activate_chaos:
                     self.chaos_mode = True
-                    self.chaos_cooldown = 45  # Reduced from 120 (~1.5 seconds instead of 4)
+                    self.chaos_cooldown = 60  # 2 seconds duration
                     self.stats['jump_rejections'] += 1
                     detection = None
                 
@@ -582,6 +601,7 @@ class BallTracker:
         self.chaos_cooldown = 0
         self.chaos_activation_cooldown = 0
         self.last_accepted_position = None
+        self.recent_jumps.clear()
         self.stats = {
             'total_updates': 0,
             'successful_tracks': 0,
