@@ -75,25 +75,41 @@ if not run_shell(
 
 print("✓ System dependencies installed")
 
-# Step 3: Install Python build tools
+# Step 3: Install Python build tools + CMake upgrade
+print("\n3️⃣  Installing Python build tools...")
+# Install newer CMake to avoid pybind11 conflicts
 if not run_shell(
-    "pip install -q --upgrade pip setuptools wheel cmake pybind11 ninja",
-    "3️⃣  Installing Python build tools"
+    "pip install -q --upgrade pip setuptools wheel ninja",
+    "Installing pip tools"
+):
+    sys.exit(1)
+
+# Install specific compatible versions
+if not run_shell(
+    "pip install -q 'cmake>=3.20' 'pybind11>=2.10.0'",
+    "Installing CMake and pybind11 (compatible versions)"
 ):
     sys.exit(1)
 
 print("✓ Python build tools ready")
 
-# Step 4: Clone VideoProcessingFramework
+# Step 4: Clone VideoProcessingFramework (develop branch = más actualizado)
 print("\n4️⃣  Cloning NVIDIA Video Processing Framework...")
 if os.path.exists("/tmp/VideoProcessingFramework"):
     run_shell("rm -rf /tmp/VideoProcessingFramework", check=False)
 
+# Clone develop branch (más compatible con CMake moderno)
 if not run_shell(
-    "cd /tmp && git clone -q https://github.com/NVIDIA/VideoProcessingFramework.git",
-    "Cloning repository"
+    "cd /tmp && git clone -q -b develop --single-branch https://github.com/NVIDIA/VideoProcessingFramework.git",
+    "Cloning repository (develop branch)"
 ):
-    sys.exit(1)
+    # Fallback to main branch
+    print("⚠️  Develop branch failed, trying main branch...")
+    if not run_shell(
+        "cd /tmp && git clone -q https://github.com/NVIDIA/VideoProcessingFramework.git",
+        "Cloning repository (main branch)"
+    ):
+        sys.exit(1)
 
 print("✓ Repository cloned")
 
@@ -106,7 +122,16 @@ os.environ['CUDACXX'] = '/usr/local/cuda/bin/nvcc'
 os.environ['CUDA_HOME'] = '/usr/local/cuda'
 os.environ['PATH'] = f"/usr/local/cuda/bin:{os.environ.get('PATH', '')}"
 os.environ['TORCH_CUDA_ARCH_LIST'] = "7.5"  # For T4
-os.environ['CMAKE_ARGS'] = "-DPYBIND11_FINDPYTHON=OFF"
+os.environ['CUDA_ARCH_LIST'] = "7.5"
+
+# CMake args to fix pybind11 compatibility
+cmake_args = [
+    "-DCMAKE_POLICY_VERSION=3.20",
+    "-DPYBIND11_FINDPYTHON=ON",
+    "-DPython_EXECUTABLE=/usr/bin/python3",
+    "-DCMAKE_BUILD_TYPE=Release"
+]
+os.environ['CMAKE_ARGS'] = " ".join(cmake_args)
 
 # Build with detailed output
 build_success = run_shell(
@@ -119,18 +144,39 @@ build_success = run_shell(
 )
 
 if not build_success:
-    print("\n⚠️  Standard build failed. Trying alternative method...")
+    print("\n⚠️  Standard build failed. Trying alternative methods...")
     
-    # Try with setup.py directly
+    # Method 2: Update pybind11 in the repo and try again
+    print("\n   Trying: Update pybind11 requirement in pyproject.toml...")
+    run_shell(
+        """
+        cd /tmp/VideoProcessingFramework && \
+        sed -i 's/pybind11.*/pybind11>=2.10.0",/' pyproject.toml
+        """,
+        check=False
+    )
+    
     build_success = run_shell(
         """
         cd /tmp/VideoProcessingFramework && \
-        python3 setup.py build_ext --inplace && \
-        pip install --no-build-isolation --no-deps -e .
+        pip install --no-cache-dir --verbose .
         """,
-        "Alternative build method",
+        "Retry with updated pybind11",
         check=False
     )
+    
+    # Method 3: Try with setup.py directly
+    if not build_success:
+        print("\n   Trying: Direct setup.py build...")
+        build_success = run_shell(
+            """
+            cd /tmp/VideoProcessingFramework && \
+            python3 setup.py build_ext --inplace && \
+            pip install --no-build-isolation --no-deps -e .
+            """,
+            "Setup.py build method",
+            check=False
+        )
     
     if not build_success:
         print("\n❌ Build failed!")
