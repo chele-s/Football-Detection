@@ -1,4 +1,4 @@
-    """
+"""
 Detector de balón optimizado usando RF-DETR.
 
 Optimizaciones para baja latencia:
