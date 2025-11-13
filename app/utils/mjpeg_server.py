@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class MJPEGServer:
-    def __init__(self, port=8554):
+    def __init__(self, port=8080):
         self.port = port
         self.frame = None
         self.lock = threading.Lock()

@@ -105,7 +105,7 @@ def main():
     mjpeg_server = MJPEGServer(port=mjpeg_port)
     mjpeg_server.start()
     print("✅ MJPEG server started!")
-    print(f"📺 Stream URL: http://localhost:{mjpeg_port}/stream.mjpg")
+    print(f"📺 Stream URL: http://localhost:8080/stream.mjpg")
     
     # Open video with GPU decoder (NVDEC)
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
