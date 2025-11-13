@@ -1,10 +1,10 @@
 model:
   path: "models/checkpoint_best_total.pth"  # ONNX model for 1.5-2x speedup
-  confidence: 0.12
+  confidence: 0.45
   iou_threshold: 0.45
   device: "cuda"
   half_precision: true
-  imgsz: 960
+  imgsz: 1024
   multi_scale: false
   warmup_iterations: 3
   ball_class_id: 1
