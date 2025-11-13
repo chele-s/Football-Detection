@@ -11,6 +11,6 @@ model:
 
 tracking:
   max_lost_frames: 15
-  min_confidence: 0.1
+  min_confidence: 0.50
   iou_threshold: 0.15
   history_size: 30
