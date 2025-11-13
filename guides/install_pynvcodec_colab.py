@@ -43,16 +43,34 @@ def main():
             print(f"  {line.strip()}")
             break
     
-    # Install system dependencies
-    if not run_cmd(
-        "apt-get update && apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev pkg-config",
-        "2. Installing system dependencies (FFmpeg, codecs)"
-    ):
+    # Install system dependencies (more complete)
+    print("\n2. Installing system dependencies (FFmpeg, CUDA headers, etc.)...")
+    deps_cmd = """
+    apt-get update && \
+    apt-get install -y \
+        ffmpeg \
+        libavcodec-dev \
+        libavformat-dev \
+        libavutil-dev \
+        libswscale-dev \
+        libavdevice-dev \
+        libavfilter-dev \
+        pkg-config \
+        cmake \
+        build-essential \
+        python3-dev \
+        git
+    """
+    result = subprocess.run(deps_cmd, shell=True, capture_output=True, text=True)
+    print(result.stdout)
+    if result.returncode != 0:
+        print(f"❌ Error installing dependencies: {result.stderr}")
         return False
+    print("✓ System dependencies installed")
     
     # Install Python build tools
     if not run_cmd(
-        "pip install --upgrade pip cmake pybind11",
+        "pip install --upgrade pip setuptools wheel cmake pybind11",
         "3. Installing Python build tools"
     ):
         return False
@@ -68,31 +86,71 @@ def main():
     ):
         return False
     
-    # Build PyNvCodec
+    # Build PyNvCodec with verbose output
     print("\n5. Building PyNvCodec (this takes ~5 minutes)...")
+    print("   Setting up environment variables...")
+    
+    # Set environment variables for build
+    build_env = os.environ.copy()
+    build_env['CUDACXX'] = '/usr/local/cuda/bin/nvcc'
+    build_env['CUDA_HOME'] = '/usr/local/cuda'
+    build_env['PATH'] = f"/usr/local/cuda/bin:{build_env.get('PATH', '')}"
+    
+    # Try building with verbose output
     build_commands = """
     cd /tmp/VideoProcessingFramework && \
-    export CUDACXX=/usr/local/cuda/bin/nvcc && \
-    pip install .
+    python3 setup.py build_ext --verbose && \
+    pip install --verbose .
     """
     
-    result = subprocess.run(build_commands, shell=True, capture_output=True, text=True)
-    print(result.stdout)
+    print("   Building... (this will show detailed output)")
+    result = subprocess.run(
+        build_commands, 
+        shell=True, 
+        capture_output=False,  # Show output in real-time
+        text=True,
+        env=build_env
+    )
     
     if result.returncode != 0:
-        print(f"❌ Build failed: {result.stderr}")
-        print("\nTrying alternative installation method...")
+        print(f"\n❌ Build failed with exit code {result.returncode}")
+        print("\nTrying alternative approach: pip install with --no-build-isolation...")
         
-        # Alternative: Install pre-built wheel (if available)
+        # Try without build isolation
+        alt_cmd = """
+        cd /tmp/VideoProcessingFramework && \
+        pip install --no-build-isolation --verbose .
+        """
+        
         alt_result = subprocess.run(
-            "pip install PyNvCodec",
-            shell=True, 
-            capture_output=True, 
-            text=True
+            alt_cmd,
+            shell=True,
+            capture_output=False,
+            text=True,
+            env=build_env
         )
         
         if alt_result.returncode != 0:
-            print("❌ Installation failed. Check CUDA version and GPU compatibility.")
+            print("\n❌ All installation methods failed.")
+            print("\nDiagnostic information:")
+            print("=" * 60)
+            
+            # Check CUDA
+            cuda_check = subprocess.run("nvcc --version", shell=True, capture_output=True, text=True)
+            print("CUDA compiler:")
+            print(cuda_check.stdout if cuda_check.returncode == 0 else "❌ nvcc not found")
+            
+            # Check FFmpeg
+            ffmpeg_check = subprocess.run("ffmpeg -version | head -n 1", shell=True, capture_output=True, text=True)
+            print("\nFFmpeg:")
+            print(ffmpeg_check.stdout if ffmpeg_check.returncode == 0 else "❌ ffmpeg not found")
+            
+            # Check Python dev
+            python_check = subprocess.run("python3-config --includes", shell=True, capture_output=True, text=True)
+            print("\nPython development headers:")
+            print(python_check.stdout if python_check.returncode == 0 else "❌ python3-dev not found")
+            
+            print("=" * 60)
             return False
     
     # Test installation

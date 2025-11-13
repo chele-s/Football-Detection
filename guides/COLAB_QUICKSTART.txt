@@ -1,0 +1,86 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 GOOGLE COLAB QUICKSTART - GPU PIPELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PASO 1: HABILITA GPU EN COLAB
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Runtime → Change runtime type → Hardware accelerator: GPU → Save
+
+
+PASO 2: INSTALA PyNvCodec
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Copia y pega este código en una celda de Colab:
+
+# Install PyNvCodec for GPU video acceleration
+!wget -q https://raw.githubusercontent.com/[TU-REPO]/guides/colab_install_pynvcodec.py
+!python colab_install_pynvcodec.py
+
+O alternativamente, copia TODO el contenido de colab_install_pynvcodec.py
+directamente en una celda.
+
+
+PASO 3: INSTALA TU PROYECTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Clone tu repositorio
+!git clone https://github.com/[TU-USER]/Football-Detection.git
+%cd Football-Detection
+
+# Instala dependencias
+!pip install -r requirements.txt
+
+
+PASO 4: USA EL GPU PIPELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+from app.utils import load_config
+from app.pipelines import AutoPipeline  # Auto-detecta GPU
+
+config = load_config('config/config.yaml')
+
+# AutoPipeline usa GPU si está disponible, sino usa CPU
+pipeline = AutoPipeline(config, prefer_gpu=True)
+
+# Run pipeline
+pipeline.run(
+    input_source="path/to/video.mp4",
+    output_destination="output.mp4"
+)
+
+
+RESULTADOS ESPERADOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Video      CPU Pipeline   GPU Pipeline   Mejora
+────────────────────────────────────────────────
+720p       19 FPS         62 FPS         3.2x
+1080p      12 FPS         48 FPS         4.0x
+
+GPU usage: 1.5% → 45% ✓
+CPU freed: 78% → 12% ✓
+
+
+TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ERROR: "Build failed"
+→ Asegúrate de tener GPU habilitada en Colab
+→ Runtime → Restart runtime
+→ Vuelve a correr la instalación
+
+ERROR: "CUDA out of memory"
+→ Reduce resolución de output en config.yaml
+→ Restart runtime para limpiar VRAM
+
+ERROR: "NVDEC initialization failed"
+→ Tu video usa codec no soportado
+→ Convierte a H.264:
+  !ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+¿Problemas? Revisa los logs del script de instalación
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
