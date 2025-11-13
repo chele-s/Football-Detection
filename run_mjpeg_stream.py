@@ -119,8 +119,8 @@ def main():
     mjpeg_server = MJPEGServer(port=mjpeg_port)
     mjpeg_server.start()
     print("✅ MJPEG server started!")
-    print("📺 Stream URL: http://localhost:8080/stream.mjpg")
-    print("💡 En Colab, usa ngrok para exponer el puerto 8080")
+    print("📺 Stream URL: http://localhost:8554/stream.mjpg")
+    print("💡 En Colab, usa ngrok para exponer el puerto 8554")
     
     # Open video
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
