@@ -106,6 +106,7 @@ os.environ['CUDACXX'] = '/usr/local/cuda/bin/nvcc'
 os.environ['CUDA_HOME'] = '/usr/local/cuda'
 os.environ['PATH'] = f"/usr/local/cuda/bin:{os.environ.get('PATH', '')}"
 os.environ['TORCH_CUDA_ARCH_LIST'] = "7.5"  # For T4
+os.environ['CMAKE_ARGS'] = "-DPYBIND11_FINDPYTHON=OFF"
 
 # Build with detailed output
 build_success = run_shell(
