@@ -4,7 +4,7 @@ model:
   iou_threshold: 0.45
   device: "cuda"
   half_precision: true
-  imgsz: 720
+  imgsz: 640
   multi_scale: false
   warmup_iterations: 3
   ball_class_id: 1
