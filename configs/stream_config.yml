@@ -1,5 +1,5 @@
 stream:
-  input_url: "clean_video_1440p_panoramic.mkv"
+  input_url: "clean_video_1080p.mp4"
   output_url: "rtmp://localhost/live/output"
   target_fps: 30
   bitrate: "4000k"
