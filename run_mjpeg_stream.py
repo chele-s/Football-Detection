@@ -833,7 +833,7 @@ def main():
                     cv2.putText(cropped, "PRED (0/15)", (cropped.shape[1] - 150, 60), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
-            display_frame = cv2.resize(cropped, (1920, 1080), interpolation=cv2.INTER_LINEAR)
+            display_frame = cv2.resize(cropped, (1920, 720), interpolation=cv2.INTER_LINEAR)
             
             mjpeg_server.update_frame(display_frame)
             
