@@ -1,5 +1,5 @@
 stream:
-  input_url: "clean_video.mp4"
+  input_url: "clean_video_1080p.mp4"
   output_url: "rtmp://localhost/live/output"
   target_fps: 20
   bitrate: "4000k"
