@@ -14,7 +14,7 @@ import sys
 
 from app.inference import BallDetector
 from app.tracking import BallTracker
-from app.utils import load_config, merge_configs, MJPEGServer
+from app.utils import load_config, merge_configs, MJPEGServer, RTMPClient
 from app.camera import VirtualCamera
 
 # Check GPU availability
@@ -109,6 +109,15 @@ def main():
     
     # Open video with GPU decoder (NVDEC)
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
+
+    if RTMPClient.is_youtube_url(video_path):
+        print("YouTube URL detected. Resolviendo stream...")
+        stream_url = RTMPClient.get_youtube_stream_url(video_path)
+        if stream_url is None:
+            raise ValueError("No se pudo obtener el stream de YouTube")
+        video_path = stream_url
+        print("✓ Stream directo obtenido")
+
     print(f"\n[5/5] Opening video with GPU decoder (NVDEC)...")
     print(f"   Source: {video_path}")
     
@@ -187,10 +196,8 @@ def main():
                 decode_times.pop(0)
             
             if not ret:
-                print("🔄 Video ended, restarting...")
-                reader.release()
-                reader = GPUVideoReader(video_path, device=0)
-                continue
+                print("✅ End of stream alcanzado. Cerrando loop.")
+                break
             
             # frame_tensor is [3, H, W] in VRAM, RGB, float [0..1]
             _, h, w = frame_tensor.shape
@@ -423,11 +430,11 @@ def main():
             
             cv2.putText(display_frame, f"FPS: {avg_fps:.1f} [GPU]", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(display_frame, f"Decode: {avg_decode:.1f}ms", (10, 60),
+            cv2.putText(display_frame, f"Decode: {avg_decode:.1f}ms" if decode_times else "Decode: N/A", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-            cv2.putText(display_frame, f"Inference: {avg_inference:.1f}ms", (10, 85),
+            cv2.putText(display_frame, f"Inference: {avg_inference:.1f}ms" if inference_times else "Inference: N/A", (10, 85),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-            cv2.putText(display_frame, f"Crop: {avg_crop:.1f}ms", (10, 110),
+            cv2.putText(display_frame, f"Crop: {avg_crop:.1f}ms" if crop_times else "Crop: N/A", (10, 110),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
             
             if track_result:
@@ -453,8 +460,9 @@ def main():
                 actual_fps = 30 / elapsed if elapsed > 0 else 0
                 
                 status = "TRACK" if track_result and track_result[2] else "PRED" if track_result else "LOST"
-                print(f"[GPU] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | "
-                      f"Decode: {avg_decode:4.1f}ms | Inf: {avg_inference:4.1f}ms | "
+                decode_str = f"Decode: {avg_decode:4.1f}ms" if decode_times else "Decode: N/A"
+                inf_str = f"Inf: {avg_inference:4.1f}ms" if inference_times else "Inf: N/A"
+                print(f"[GPU] Frame {frame_count:4d} | FPS: {actual_fps:5.1f} | {decode_str} | {inf_str} | "
                       f"Status: {status} | Zoom: {current_zoom_level:.2f}x")
                 
                 last_log_time = time.time()
@@ -475,9 +483,21 @@ def main():
         print("FINAL STATISTICS (GPU PIPELINE)")
         print("="*60)
         print(f"Total frames: {frame_count}")
-        print(f"Avg decode time: {np.mean(decode_times):.2f}ms")
-        print(f"Avg inference time: {np.mean(inference_times):.2f}ms")
-        print(f"Avg crop time: {np.mean(crop_times):.2f}ms")
+        if decode_times:
+            print(f"Avg decode time: {np.mean(decode_times):.2f}ms")
+        else:
+            print("Avg decode time: N/A")
+
+        if inference_times:
+            print(f"Avg inference time: {np.mean(inference_times):.2f}ms")
+        else:
+            print("Avg inference time: N/A")
+
+        if crop_times:
+            print(f"Avg crop time: {np.mean(crop_times):.2f}ms")
+        else:
+            print("Avg crop time: N/A")
+        
         print(f"Detections: {detection_count}")
         print("="*60)
 
