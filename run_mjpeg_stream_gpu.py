@@ -12,7 +12,7 @@ from pathlib import Path
 import math
 import sys
 
-from app.inference import BallDetector
+from app.Inference import BallDetector
 from app.tracking import BallTracker
 from app.utils import load_config, merge_configs, MJPEGServer, RTMPClient
 from app.camera import VirtualCamera

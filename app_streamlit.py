@@ -7,7 +7,7 @@ from collections import deque
 from queue import Queue
 import torch
 
-from app.inference import BallDetector
+from app.Inference import BallDetector
 from app.tracking import BallTracker
 from app.utils import VideoReader, RTMPClient, load_config, merge_configs, MJPEGServer
 from app.camera import VirtualCamera

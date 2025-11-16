@@ -7,7 +7,7 @@ import math
 from typing import Optional, Dict, Any
 from collections import deque
 
-from app.inference import BallDetector
+from app.Inference import BallDetector
 from app.tracking import BallTracker
 from app.camera import VirtualCamera
 from app.utils import VideoReader, FFMPEGWriter, RTMPClient

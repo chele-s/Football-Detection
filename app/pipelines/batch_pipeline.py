@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, List
 from tqdm import tqdm
 from collections import deque
 
-from app.inference import BallDetector
+from app.Inference import BallDetector
 from app.tracking import BallTracker
 from app.camera import VirtualCamera
 from app.utils import VideoReader, VideoWriter

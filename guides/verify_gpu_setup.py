@@ -5,7 +5,24 @@ Quick verification script for GPU pipeline setup
 Run this to check if your system is ready for GPU-accelerated video processing.
 """
 
+import importlib
 import sys
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _detect_app_module() -> str:
+    for candidate in ("app", "App"):
+        if (PROJECT_ROOT / candidate).exists():
+            return candidate
+    return "app"
+
+
+APP_MODULE = _detect_app_module()
 
 
 def check_cuda():
@@ -94,9 +111,9 @@ def check_project_setup():
     import os
     
     required_files = [
-        'app/utils/gpu_video_io.py',
-        'app/pipelines/gpu_stream_pipeline.py',
-        'app/pipelines/auto_pipeline.py',
+        f'{APP_MODULE}/utils/gpu_video_io.py',
+        f'{APP_MODULE}/pipelines/gpu_stream_pipeline.py',
+        f'{APP_MODULE}/pipelines/auto_pipeline.py',
         'install_pynvcodec_colab.py'
     ]
     
@@ -115,7 +132,9 @@ def check_gpu_pipeline():
     """Check if GPU pipeline can be imported"""
     print("\n5️⃣  Checking GPU pipeline import...")
     try:
-        from app.pipelines import GPU_PIPELINE_AVAILABLE, AutoPipeline
+        pipelines = importlib.import_module(f"{APP_MODULE}.pipelines")
+        GPU_PIPELINE_AVAILABLE = getattr(pipelines, "GPU_PIPELINE_AVAILABLE", False)
+        AutoPipeline = getattr(pipelines, "AutoPipeline", None)
         if GPU_PIPELINE_AVAILABLE:
             print(f"   ✅ GPU pipeline available")
             return True
