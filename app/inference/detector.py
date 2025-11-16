@@ -158,19 +158,12 @@ class BallDetector:
         
         # GPU path: accept torch.Tensor directly (zero-copy, already in VRAM)
         if isinstance(frame, torch.Tensor):
-            # Tensor should be [3, H, W] or [H, W, 3] in RGB, float [0..1]
             if frame.dim() == 3:
-                if frame.shape[0] == 3:  # [3, H, W] → [H, W, 3]
-                    frame = frame.permute(1, 2, 0)
-                
-                # Ensure float [0..1]
+                if frame.shape[0] != 3 and frame.shape[-1] == 3:
+                    frame = frame.permute(2, 0, 1)
                 if frame.dtype == torch.uint8:
                     frame = frame.float() / 255.0
-                
-                # Convert to numpy for RF-DETR (TODO: RF-DETR native tensor support)
-                # This is a CPU copy, but only for the resized image (not original frame)
-                frame_rgb = (frame * 255).byte().cpu().numpy()
-                image = frame_rgb
+                image = frame
             else:
                 raise ValueError(f"Invalid tensor shape: {frame.shape}. Expected [3, H, W] or [H, W, 3]")
         
@@ -184,7 +177,13 @@ class BallDetector:
             elif frame.shape[2] == 3:
                 # BGR to RGB using cv2 (faster than [::-1].copy())
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            image = frame_rgb
+            tensor = torch.from_numpy(frame_rgb)
+            tensor = tensor.permute(2, 0, 1).contiguous()
+            if tensor.dtype == torch.uint8:
+                tensor = tensor.float().div_(255.0)
+            if self.device == 'cuda' and torch.cuda.is_available():
+                tensor = tensor.pin_memory().to(self.device, non_blocking=True)
+            image = tensor
         else:
             # Already PIL or other format
             image = frame

@@ -65,8 +65,7 @@ class GPUVideoReader:
         try:
             self.decoder = nvc.PyNvDecoder(
                 self.source,
-                self.device,
-                self.decode_surfaces
+                self.device
             )
             logger.info(f"✓ NVDEC decoder initialized on GPU {self.device}")
         except Exception as e:
@@ -80,9 +79,12 @@ class GPUVideoReader:
             )
         
         # Color space converter (NV12 → RGB)
+        self.width = self.decoder.Width()
+        self.height = self.decoder.Height()
+
         self.to_rgb = nvc.PySurfaceConverter(
-            self.decoder.Width(),
-            self.decoder.Height(),
+            self.width,
+            self.height,
             nvc.PixelFormat.NV12,
             nvc.PixelFormat.RGB,
             self.device
@@ -141,7 +143,7 @@ class GPUVideoReader:
         """
         try:
             # Decode frame on GPU (NVDEC)
-            nv12_surface = self.decoder.DecodeSingleFrame()
+            nv12_surface = self.decoder.DecodeSingleSurface()
             
             if nv12_surface.Empty():
                 return False, None
