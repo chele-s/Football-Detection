@@ -6,7 +6,10 @@ import torch
 from pathlib import Path
 import math
 
-from app.Inference import BallDetector
+try:
+    from app.Inference import BallDetector
+except ModuleNotFoundError:
+    from app.inference import BallDetector
 from app.tracking import BallTracker
 from app.utils import VideoReader, load_config, merge_configs, MJPEGServer
 from app.camera import VirtualCamera
