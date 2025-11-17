@@ -126,17 +126,21 @@ def main():
     print("💡 En Colab, usa ngrok para exponer el puerto 8554")
     
     # Open video
+    output_config = config.get('output', {})
+    target_output_width = int(output_config.get('width', 1920))
+    target_output_height = int(output_config.get('height', 1080))
+
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
     print(f"\n[5/5] Opening video: {video_path}")
     reader = VideoReader(video_path)
     print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
-    
+
     # Initialize virtual camera
     # Base crop size for normal view - will zoom progressively when tracking
-    base_output_width = 960
-    base_output_height = 540
     camera_config = config.get('camera', {})
-    
+    base_output_width = int(camera_config.get('base_output_width', max(1, target_output_width // 2)))
+    base_output_height = int(camera_config.get('base_output_height', max(1, target_output_height // 2)))
+
     virtual_camera = VirtualCamera(
         frame_width=reader.width,
         frame_height=reader.height,
@@ -151,7 +155,8 @@ def main():
         use_pid=True,
         prediction_steps=5
     )
-    print(f"   → Camera config: {base_output_width}x{base_output_height} base crop")
+    print(f"   → Camera base crop: {base_output_width}x{base_output_height}")
+    print(f"   → Final stream output: {target_output_width}x{target_output_height}")
     print(f"   → Professional cameraman mode: Smooth zoom when tracking ball")
     
     ball_class_id = config['model'].get('ball_class_id', 0)
@@ -836,7 +841,12 @@ def main():
                     cv2.putText(cropped, "PRED (0/15)", (cropped.shape[1] - 150, 60), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
-            display_frame = cv2.resize(cropped, (1920, 720), interpolation=cv2.INTER_LINEAR)
+            resize_interp = cv2.INTER_CUBIC if (target_output_width > cropped.shape[1]) else cv2.INTER_LINEAR
+            display_frame = cv2.resize(
+                cropped,
+                (target_output_width, target_output_height),
+                interpolation=resize_interp
+            )
             
             mjpeg_server.update_frame(display_frame)
             
