@@ -131,11 +131,15 @@ def main():
     
     # Initialize tracker with optimized parameters for ball tracking
     print("[3/5] Initializing ball tracker...")
+    tracking_config = config.get('tracking', {})
     tracker = BallTracker(
-        max_lost_frames=config['tracking'].get('max_lost_frames', 10),
-        min_confidence=config['tracking'].get('min_confidence', 0.10),
-        iou_threshold=config['tracking'].get('iou_threshold', 0.20),
-        adaptive_noise=True
+        max_lost_frames=tracking_config.get('max_lost_frames', 10),
+        min_confidence=tracking_config.get('min_confidence', 0.10),
+        iou_threshold=tracking_config.get('iou_threshold', 0.20),
+        adaptive_noise=True,
+        allow_chaos_mode=tracking_config.get('allow_chaos_mode', False),
+        allow_jitter_mode=tracking_config.get('allow_jitter_mode', False),
+        detection_smoothing=tracking_config.get('detection_smoothing', 0.25)
     )
     print(f"   → Tracker config: max_lost={tracker.max_lost_frames}, min_conf={tracker.min_confidence:.2f}, iou={tracker.iou_threshold:.2f}")
     
@@ -188,6 +192,12 @@ def main():
     print(f"   → Camera base crop: {base_output_width}x{base_output_height}")
     print(f"   → Final stream output: {target_output_width}x{target_output_height}")
     print(f"   → Professional cameraman mode: Smooth zoom when tracking ball")
+
+    effects_config = config.get('effects', {})
+    bloom_enabled = bool(effects_config.get('enable_bloom', False))
+    bloom_strength = float(effects_config.get('bloom_strength', 0.35))
+    bloom_sigma = float(effects_config.get('bloom_sigma', 6.0))
+    bloom_duration_frames = int(effects_config.get('bloom_duration_frames', 12))
     
     ball_class_id = config['model'].get('ball_class_id', 0)
     
@@ -259,9 +269,11 @@ def main():
     roi_fail_max = 150  # Increased from 120 (5 seconds) to prevent premature deactivation
     roi_last_valid_pos = None
     bloom_counter = 0
-    bloom_max = 12
+    bloom_max = bloom_duration_frames if bloom_enabled else 0
     far_reacquire_count = 0
     far_reacquire_need = 6
+    last_reliable_position = None
+    lost_pan_limit = max(18, int(diag * 0.012))
     det_skip = 0
     
     try:
@@ -480,7 +492,22 @@ def main():
                         roi_fail_count = 0
                         roi_last_valid_pos = None  # Reset on ROI activation
                         print(f"✓ ROI activated - now detecting only in zoom region for performance")
-                state = tracker.get_state()
+                    if is_tracking:
+                        last_reliable_position = (x, y)
+                    else:
+                        if last_reliable_position is not None:
+                            blend = 0.25
+                            x = last_reliable_position[0] * (1.0 - blend) + x * blend
+                            y = last_reliable_position[1] * (1.0 - blend) + y * blend
+                        current_cx = virtual_camera.current_center_x
+                        current_cy = virtual_camera.current_center_y
+                        dx = x - current_cx
+                        dy = y - current_cy
+                        if abs(dx) > lost_pan_limit:
+                            x = current_cx + math.copysign(lost_pan_limit, dx)
+                        if abs(dy) > lost_pan_limit:
+                            y = current_cy + math.copysign(lost_pan_limit, dy)
+                    state = tracker.get_state()
                 vmag = state['velocity_magnitude'] if state else 0.0
                 kalman_ok = state['kalman_stable'] if state else True
                 if last_stable is None:
@@ -489,115 +516,6 @@ def main():
                     anchor = (x, y)
                 use_x, use_y = x, y
                 # Update last_det for visual overlay
-                if ball_detection:
-                    bx, by, bw, bh, bconf = ball_detection
-                    last_det = (bx, by)
-
-                if is_tracking and kalman_ok and cooldown == 0:
-                    d = math.hypot(x - last_stable[0], y - last_stable[1])
-                    if d > jump_reset_px:
-                        cooldown = cooldown_max
-                        frames_tracking = 0
-                        stability_score = max(stability_score - 0.2, 0.0)
-                        use_x, use_y = last_stable
-                    else:
-                        if d <= stable_step_px:
-                            frames_tracking += 1
-                            stability_score = min(stability_score + 0.12, 1.0)
-                            a = 0.18
-                            last_stable = (last_stable[0] * (1 - a) + x * a, last_stable[1] * (1 - a) + y * a)
-                        else:
-                            frames_tracking = max(frames_tracking - 1, 0)
-                            stability_score = max(stability_score - 0.10, 0.0)
-                else:
-                    if cooldown > 0:
-                        cooldown -= 1
-                        use_x, use_y = last_stable if last_stable else (x, y)
-                    if not is_tracking:
-                        frames_tracking = max(frames_tracking - 1, 0)
-                        stability_score = max(stability_score - 0.05, 0.0)
-
-                if anchor is not None and is_tracking:
-                    dx = use_x - anchor[0]
-                    dy = use_y - anchor[1]
-                    dist = math.hypot(dx, dy)
-                    cur_step = int(max_pan_step * (1.0 + max(0.0, current_zoom_level - 1.0) * 1.5 + min(vmag / 450.0, 0.8)))
-                    if dist > cur_step and dist > 1e-6:
-                        r = cur_step / dist
-                        anchor = (anchor[0] + dx * r, anchor[1] + dy * r)
-                    else:
-                        # Reduced alpha for smoother anchor movement
-                        a_anch = 0.04 + 0.08 * max(0.0, current_zoom_level - 1.0)
-                        if a_anch > 0.18:
-                            a_anch = 0.18
-                        anchor = (anchor[0] * (1.0 - a_anch) + use_x * a_anch, anchor[1] * (1.0 - a_anch) + use_y * a_anch)
-                    use_x, use_y = anchor
-
-                if is_tracking:
-                    if center_lp is None:
-                        center_lp = (use_x, use_y)
-                    zfac_c = max(0.0, min(1.0, current_zoom_level - 1.0))
-                    # Reduced alpha for smoother center movement
-                    ac = 0.10 - 0.05 * zfac_c
-                    if ac < 0.05:
-                        ac = 0.05
-                    if ac > 0.12:
-                        ac = 0.12
-                    cx = center_lp[0] * (1.0 - ac) + use_x * ac
-                    cy = center_lp[1] * (1.0 - ac) + use_y * ac
-                    center_lp = (cx, cy)
-                    use_x, use_y = center_lp
-
-                # Reset lost search center when we have tracking again
-                if is_tracking:
-                    lost_search_center = None
-                    
-                # CRITICAL: Only update camera when we have REAL detection, not predictions
-                # This prevents jitter from Kalman predictions
-                if is_tracking and det_ok:
-                    if ball_detection and last_det is not None:
-                        dvx = ball_detection[0] - last_det[0]
-                        dvy = ball_detection[1] - last_det[1]
-                        vhx, vhy = dvx, dvy
-                    else:
-                        vhx, vhy = tracker.get_velocity()
-                    # Use ACTUAL detection position, not smoothed tracker position
-                    # This ensures camera locks onto real ball, not lagged Kalman estimate
-                    if ball_detection:
-                        bx, by = ball_detection[0], ball_detection[1]
-                        crop_coords = virtual_camera.update(bx, by, time.time(), velocity_hint=(vhx, vhy))
-                    else:
-                        crop_coords = virtual_camera.update(use_x, use_y, time.time(), velocity_hint=(vhx, vhy))
-                else:
-                    # Freeze camera when predicting or lost - prevents jitter
-                    crop_coords = virtual_camera.get_current_crop()
-                detection_count += 1
-                lost_count = 0
-
-                follow_cx, follow_cy = None, None
-                if last_raw is not None:
-                    dxn = x - last_raw[0]
-                    dyn = y - last_raw[1]
-                    step = math.hypot(dxn, dyn)
-                    lvx, lvy = last_vec
-                    lvnorm = math.hypot(lvx, lvy)
-                    dnorm = math.hypot(dxn, dyn)
-                    cosd = (lvx*dxn + lvy*dyn)/(lvnorm*dnorm) if (lvnorm>1e-6 and dnorm>1e-6) else 1.0
-                    if step <= natural_step_px or cosd >= min_dir_cos:
-                        natural_counter += 1
-                    else:
-                        natural_counter = max(natural_counter - 1, 0)
-                    last_vec = (0.8*lvx + 0.2*dxn, 0.8*lvy + 0.2*dyn)
-                    dirn = math.hypot(dxn, dyn)
-                    if dirn > 1e-6:
-                        ux, uy = dxn/dirn, dyn/dirn
-                        lead_px = int(12 + 24*max(0.0, current_zoom_level - 1.0) + min(vmag/18.0, 32.0))
-                        fx = (anchor[0] if anchor else x) + ux*lead_px
-                        fy = (anchor[1] if anchor else y) + uy*lead_px
-                        follow_cx, follow_cy = int(max(0, min(reader.width-1, fx))), int(max(0, min(reader.height-1, fy)))
-                    if cosd <= -0.4 and step > close_thresh*0.8:
-                        bloom_counter = bloom_max
-                last_raw = (x, y)
                 if ball_detection:
                     last_det = (ball_detection[0], ball_detection[1])
                     recent_dets.append((ball_detection[0], ball_detection[1]))
@@ -836,10 +754,10 @@ def main():
                            (bbox_x - bbox_w//2, bbox_y - bbox_h//2 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             
-            if bloom_counter > 0:
+            if bloom_enabled and bloom_counter > 0:
                 intensity = bloom_counter / bloom_max
-                blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=6, sigmaY=6)
-                cropped = cv2.addWeighted(cropped, 1.0, blurred, 0.35*intensity, 0)
+                blurred = cv2.GaussianBlur(cropped, (0, 0), sigmaX=bloom_sigma, sigmaY=bloom_sigma)
+                cropped = cv2.addWeighted(cropped, 1.0, blurred, bloom_strength * intensity, 0)
                 bloom_counter -= 1
 
             loop_time = (time.time() - loop_start) * 1000

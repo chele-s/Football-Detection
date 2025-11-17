@@ -1,0 +1,19 @@
+[Unit]
+Description=RF-DETR Football Detection Stream
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Football-Detection
+Environment="PATH=/home/ubuntu/Football-Detection/rf-detr-venv-310/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu"
+Environment="CUDA_VISIBLE_DEVICES=0"
+ExecStart=/home/ubuntu/Football-Detection/rf-detr-venv-310/bin/python run_mjpeg_stream.py
+StandardOutput=append:/var/log/football-stream/output.log
+StandardError=append:/var/log/football-stream/error.log
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

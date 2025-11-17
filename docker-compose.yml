@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  football-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rf-detr-stream
+    restart: unless-stopped
+    
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu, video, compute, utility]
+              device_ids: ['0']
+    
+    # Ports
+    ports:
+      - "8554:8554"  # MJPEG stream
+    
+    # Volumes
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./models:/app/models:ro
+      - ./data:/app/data
+      - ./clips:/app/clips
+      - ./logs:/app/logs
+    
+    # Environment
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8554/stream.mjpg"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

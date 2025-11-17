@@ -119,13 +119,19 @@ class BallTracker:
         history_size: int = 30,
         dt: float = 1/30,
         iou_threshold: float = 0.3,
-        adaptive_noise: bool = True
+        adaptive_noise: bool = True,
+        allow_chaos_mode: bool = False,
+        allow_jitter_mode: bool = False,
+        detection_smoothing: float = 0.25
     ):
         self.max_lost_frames = max_lost_frames
         self.min_confidence = min_confidence
         self.history_size = history_size
         self.iou_threshold = iou_threshold
         self.adaptive_noise = adaptive_noise
+        self.allow_chaos_mode = allow_chaos_mode
+        self.allow_jitter_mode = allow_jitter_mode
+        self.detection_smoothing = max(0.0, min(1.0, float(detection_smoothing)))
         
         self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=5.0)
         self.lost_frames = 0
@@ -142,6 +148,7 @@ class BallTracker:
         self.last_detection = None
         self.predicted_position = None
         self.last_bbox = None
+        self.filtered_position = None
         
         self.hypotheses = []
         self.hypothesis_scores = []
@@ -219,6 +226,17 @@ class BallTracker:
         
         if detection is not None:
             x_center, y_center, width, height, confidence = detection
+
+            if self.detection_smoothing > 0.0:
+                new_pos = np.array([x_center, y_center], dtype=np.float64)
+                if self.filtered_position is None:
+                    self.filtered_position = new_pos
+                else:
+                    alpha = self.detection_smoothing
+                    self.filtered_position = alpha * new_pos + (1.0 - alpha) * self.filtered_position
+                x_center = float(self.filtered_position[0])
+                y_center = float(self.filtered_position[1])
+                detection = (x_center, y_center, width, height, confidence)
             
             if self.last_accepted_position is not None:
                 jump_dist = float(np.sqrt((x_center - self.last_accepted_position[0])**2 + (y_center - self.last_accepted_position[1])**2))
@@ -234,7 +252,7 @@ class BallTracker:
                 large_jumps = sum(1 for j in self.recent_jumps if j > 120.0)
                 
                 # Detect jitter: many small consecutive movements
-                if len(self.small_movements) >= 7:
+                if self.allow_jitter_mode and len(self.small_movements) >= 7:
                     # If we have 7+ small movements in the last 10 detections
                     self.jitter_mode = True
                     self.jitter_cooldown = 45  # 1.5 seconds to stabilize
@@ -250,7 +268,7 @@ class BallTracker:
                 # 1. Single huge jump and not in cooldown, OR
                 # 2. Pattern of 3+ consecutive large jumps (>120px)
                 should_activate_chaos = False
-                if self.chaos_activation_cooldown == 0:
+                if self.allow_chaos_mode and self.chaos_activation_cooldown == 0:
                     if jump_dist > jump_threshold:
                         should_activate_chaos = True
                         logger.warning(f"HUGE JUMP: {jump_dist:.0f}px - activating chaos mode")
@@ -266,12 +284,12 @@ class BallTracker:
                     detection = None
                 
                 # More permissive during chaos mode
-                if self.chaos_mode and jump_dist > 150.0:
+                if self.allow_chaos_mode and self.chaos_mode and jump_dist > 150.0:
                     detection = None
                 
                 # During jitter mode, reject detections that cause small movements
                 # This stabilizes the camera during tremors
-                if self.jitter_mode and 15.0 < jump_dist < 65.0:
+                if self.allow_jitter_mode and self.jitter_mode and 15.0 < jump_dist < 65.0:
                     logger.debug(f"Jitter mode: suppressing small movement {jump_dist:.1f}px")
                     detection = None
             

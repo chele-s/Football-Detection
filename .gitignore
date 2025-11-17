@@ -19,19 +19,28 @@ wheels/
 .installed.cfg
 *.egg
 
+# Model weights (too large for git)
 data/
-models/
-*.pt
-*.pth
-*.onnx
-*.engine
+models/*.pth
+models/*.pt
+models/*.onnx
+models/*.engine
+!models/.gitkeep
 
+# Video files
 *.mp4
 *.avi
 *.mov
 *.mkv
-*.json
+*.webm
+*.mjpeg
+*.mjpg
 
+# JSON data files
+*.json
+!configs/*.json
+
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -39,22 +48,44 @@ models/
 *~
 .DS_Store
 
+# Logs and clips
 logs/
+clips/
 *.log
 
+# Environment files
 .env
+.env.local
+.env.production
+
+# Virtual environments
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+rf-detr-venv-310/
 
+# PyNvCodec build artifacts
+PyNvCodec_build/
+
+# Jupyter
 notebooks/.ipynb_checkpoints/
 notebooks/how_to_finetune_rf_detr_on_detection_dataset (2).ipynb
-docs/TENSORRT_MIGRATION.md
 
+# Temporary docs
+docs/TENSORRT_MIGRATION.md
 SOLUTION_TRACKER_RECOVERY.md
 QUICKSTART.md
 CHANGES_SUMMARY.md
 README_TRACKER_FIX.md
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.backup
+*~

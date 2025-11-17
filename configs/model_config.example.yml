@@ -1,0 +1,70 @@
+# Model Configuration Example
+# Copy this file to model_config.yml and customize
+
+model:
+  # Path to your trained RF-DETR model weights
+  # Supported formats: .pth (PyTorch), .onnx (ONNX Runtime), .engine (TensorRT)
+  path: "models/best_rf-detr.pth"
+  
+  # Detection confidence threshold (0.0-1.0)
+  # Lower = more detections (may include false positives)
+  # Higher = fewer detections (may miss some balls)
+  confidence: 0.25
+  
+  # IoU threshold for NMS (0.0-1.0)
+  iou_threshold: 0.45
+  
+  # Device: "cuda" or "cpu"
+  device: "cuda"
+  
+  # Half precision (FP16) for 2× speedup on modern GPUs
+  # Recommended: true for RTX 20xx and newer
+  half_precision: true
+  
+  # Model input size (640 is optimal for RF-DETR Medium)
+  imgsz: 640
+  
+  # Multi-scale inference (slower but more accurate)
+  multi_scale: false
+  
+  # Number of warmup iterations before benchmarking
+  warmup_iterations: 3
+
+# Ball tracking configuration
+tracking:
+  # Max frames to keep tracking without detection
+  # Higher = more stable but may track lost balls longer
+  max_lost_frames: 10
+  
+  # Minimum confidence to start/maintain a track
+  min_confidence: 0.10
+  
+  # IoU threshold for track matching
+  iou_threshold: 0.20
+  
+  # Adaptive noise for Kalman filter
+  # Automatically adjusts process noise during erratic behavior
+  adaptive_noise: true
+  
+  # Chaos detection threshold (pixels)
+  # Activate ultra-stability mode when jumps exceed this
+  chaos_threshold: 120
+  
+  # Mahalanobis distance threshold for gating
+  # Higher = more permissive (accepts outliers)
+  mahalanobis_threshold: 15.0
+
+# Output rendering
+output:
+  # Output resolution (overridden by stream_config.yml if present)
+  width: 1920
+  height: 1080
+  
+  # Draw bounding boxes and labels
+  draw_detections: true
+  
+  # Draw tracking trails
+  draw_trails: false
+  
+  # Show FPS and metrics overlay
+  show_metrics: true

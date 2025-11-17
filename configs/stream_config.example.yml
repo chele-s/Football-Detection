@@ -1,0 +1,70 @@
+# Stream Configuration Example
+# Copy this file to stream_config.yml and customize
+
+stream:
+  # Input source - can be:
+  # - Local file: "path/to/video.mp4"
+  # - RTMP stream: "rtmp://server/live/stream"
+  # - YouTube URL: "https://www.youtube.com/watch?v=VIDEO_ID"
+  # - UDP stream: "udp://127.0.0.1:9000"
+  input_url: "your_video_file.mp4"
+  
+  # Output RTMP (optional, for restreaming)
+  output_url: "rtmp://localhost/live/output"
+  
+  # Target FPS (30 recommended for smooth playback)
+  target_fps: 30
+  
+  # MJPEG server port (localhost only)
+  mjpeg_port: 8554
+  
+  # FFmpeg encoding settings (if using output_url)
+  bitrate: "4000k"
+  preset: "ultrafast"
+  
+  # Display options
+  show_stats: true
+  debug_mode: false
+
+# Output stream resolution (what viewers see)
+output:
+  width: 3840    # 4K ultra-wide: 3840x1440
+  height: 1440   # Standard 4K: 3840x2160
+                 # Full HD: 1920x1080
+
+# Processing resolution (for detection - lower = faster)
+processing:
+  # For high-end GPUs (RTX 5090, L4, L40S):
+  detection_width: 1920
+  detection_height: 1080
+  
+  # For mid-range GPUs (RTX 3080, A10G):
+  # detection_width: 1280
+  # detection_height: 720
+  
+  # For Windows/CPU video decode:
+  # detection_width: 960
+  # detection_height: 540
+
+# Virtual camera settings
+camera:
+  # Base crop size (should match output resolution)
+  base_output_width: 3840
+  base_output_height: 1440
+  
+  # Dead zone (0.0-0.5): area in center where camera won't move
+  # Higher = more stable, Lower = more responsive
+  dead_zone: 0.10
+  
+  # Anticipation (0.0-1.0): follow ball velocity for predictive tracking
+  # Higher = more aggressive leading
+  anticipation: 0.35
+  
+  # Zoom padding (1.0-2.0): extra margin around ball
+  # Higher = more zoomed out
+  zoom_padding: 1.2
+  
+  # One-Euro filter smoothing
+  smoothing_freq: 30.0           # Sampling frequency (match target_fps)
+  smoothing_min_cutoff: 2.5      # Lower = smoother (0.5-5.0)
+  smoothing_beta: 0.001          # Velocity sensitivity (0.0001-0.01)
