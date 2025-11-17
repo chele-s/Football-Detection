@@ -80,8 +80,11 @@ class GPUVideoReader:
         
         # Verify GPU is accessible by PyTorch CUDA
         try:
-            test_tensor = torch.zeros(1, device=f'cuda:{self.device}')
-            del test_tensor
+            with torch.cuda.device(self.device):
+                torch.cuda.init()
+                test_tensor = torch.zeros(1, device=f'cuda:{self.device}')
+                torch.cuda.current_stream(self.device).synchronize()
+                del test_tensor
             logger.info(f"✓ CUDA device {self.device} verified: {torch.cuda.get_device_name(self.device)}")
         except Exception as e:
             raise RuntimeError(
@@ -99,10 +102,29 @@ class GPUVideoReader:
         # Initialize NVDEC decoder
         try:
             logger.info(f"Initializing PyNvDecoder for GPU {self.device}...")
-            self.decoder = nvc.PyNvDecoder(
-                self.source,
-                self.device
-            )
+            
+            with torch.cuda.device(self.device):
+                torch.cuda.synchronize(self.device)
+                
+                cuda_stream = torch.cuda.current_stream(self.device)
+                ctx_handle = torch.cuda.current_device()
+                stream_handle = cuda_stream.cuda_stream
+                
+                try:
+                    self.decoder = nvc.PyNvDecoder(
+                        self.source,
+                        ctx_handle,
+                        stream_handle
+                    )
+                    logger.info("Using PyTorch CUDA context and stream")
+                except Exception as e:
+                    logger.warning(f"Failed with CUDA context/stream: {e}")
+                    logger.info("Fallback to gpu_id constructor...")
+                    self.decoder = nvc.PyNvDecoder(
+                        self.source,
+                        self.device
+                    )
+            
             logger.info(f"✓ NVDEC decoder initialized on GPU {self.device}")
         except Exception as e:
             error_msg = str(e)
@@ -137,16 +159,17 @@ class GPUVideoReader:
         self.width = self.decoder.Width()
         self.height = self.decoder.Height()
 
-        self.to_rgb = nvc.PySurfaceConverter(
-            self.width,
-            self.height,
-            nvc.PixelFormat.NV12,
-            nvc.PixelFormat.RGB,
-            self.device
-        )
-        
-        # PyTorch CUDA stream for zero-copy
         self.cuda_stream = torch.cuda.Stream(device=self.device)
+        
+        with torch.cuda.device(self.device):
+            with torch.cuda.stream(self.cuda_stream):
+                self.to_rgb = nvc.PySurfaceConverter(
+                    self.width,
+                    self.height,
+                    nvc.PixelFormat.NV12,
+                    nvc.PixelFormat.RGB,
+                    self.device
+                )
         
         self.frame_count = 0
         
@@ -197,37 +220,31 @@ class GPUVideoReader:
             - frame_tensor: torch.Tensor [3, H, W] in VRAM (RGB, float32, [0..1])
         """
         try:
-            # Decode frame on GPU (NVDEC)
-            nv12_surface = self.decoder.DecodeSingleSurface()
-            
-            if nv12_surface.Empty():
-                return False, None
-            
-            # Convert NV12 → RGB on GPU
-            rgb_surface = self.to_rgb.Execute(nv12_surface)
-            
-            if rgb_surface.Empty():
-                return False, None
-            
-            # Zero-copy: GPU surface → PyTorch CUDA tensor
-            with torch.cuda.stream(self.cuda_stream):
-                # Get raw CUDA pointer
-                surface_plane = rgb_surface.PlanePtr()
+            with torch.cuda.device(self.device):
+                nv12_surface = self.decoder.DecodeSingleSurface()
                 
-                # Wrap as numpy array (no copy, just view)
-                np_frame = np.ndarray(
-                    shape=(self.height, self.width, 3),
-                    dtype=np.uint8,
-                    buffer=surface_plane.HostFrameBuffer()
-                )
+                if nv12_surface.Empty():
+                    return False, None
                 
-                # Convert to torch tensor on GPU
-                # [H, W, 3] → [3, H, W] and normalize to [0..1]
-                frame_tensor = torch.from_numpy(np_frame).cuda(self.device, non_blocking=True)
-                frame_tensor = frame_tensor.permute(2, 0, 1).float() / 255.0
-            
-            self.frame_count += 1
-            return True, frame_tensor
+                rgb_surface = self.to_rgb.Execute(nv12_surface)
+                
+                if rgb_surface.Empty():
+                    return False, None
+                
+                with torch.cuda.stream(self.cuda_stream):
+                    surface_plane = rgb_surface.PlanePtr()
+                    
+                    np_frame = np.ndarray(
+                        shape=(self.height, self.width, 3),
+                        dtype=np.uint8,
+                        buffer=surface_plane.HostFrameBuffer()
+                    )
+                    
+                    frame_tensor = torch.from_numpy(np_frame).cuda(self.device, non_blocking=True)
+                    frame_tensor = frame_tensor.permute(2, 0, 1).float() / 255.0
+                
+                self.frame_count += 1
+                return True, frame_tensor
             
         except Exception as e:
             logger.debug(f"Decode error (likely EOF): {e}")
