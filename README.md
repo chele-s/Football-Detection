@@ -138,13 +138,48 @@ python diagnose_gpu.py
 ./start_stream.sh
 ```
 
-### Manual Installation
+### Windows Installation
+
+For Windows clients (recommended for testing before AWS deployment):
+
+```powershell
+# Clone repository
+git clone https://github.com/chele-s/Football-Detection.git
+cd Football-Detection
+
+# Run as Administrator in PowerShell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\setup_production_windows.ps1
+```
+
+**What gets installed:**
+- ✓ Chocolatey package manager
+- ✓ Python 3.10 + virtual environment
+- ✓ Git, FFmpeg, Visual Studio Build Tools
+- ✓ All Python dependencies with CUDA support
+- ✓ Diagnostic and service scripts (`.bat` and `.ps1`)
+
+**After installation:**
+
+```powershell
+# Run diagnostics
+.\diagnose_gpu_windows.ps1
+
+# Start streaming
+.\start_stream.bat
+# or
+.\start_stream.ps1
+```
+
+**Note:** PyNvCodec is typically unavailable on Windows. The pipeline will use CPU for video I/O and GPU for inference, which is sufficient for client testing.
+
+### Manual Installation (Linux)
 
 If you prefer manual setup or need to customize:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/Football-Detection.git
+git clone https://github.com/chele-s/Football-Detection.git
 cd Football-Detection
 
 # Create Python 3.10 virtual environment
@@ -774,8 +809,8 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 
 ## Support & Contributing
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/Football-Detection/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/Football-Detection/discussions)
+- **Issues**: [GitHub Issues](https://github.com/chele-s/Football-Detection/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/chele-s/Football-Detection/discussions)
 - **Enterprise Support**: Available for production deployments
 
 ## Acknowledgments
@@ -788,7 +823,7 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 ---
 
 **Version:** 3.0.0 (MJPEG Streaming)  
-**Last Updated:** November 2024  
+**Last Updated:** November 2025 
 **Status:** Production Ready  
 **Python:** 3.10  
 **CUDA:** 11.8+  
