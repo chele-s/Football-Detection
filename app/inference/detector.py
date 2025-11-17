@@ -90,12 +90,21 @@ class BallDetector:
             torch.backends.cudnn.allow_tf32 = True
             logger.info("CUDA optimizations enabled")
         
+        self.optimized = False
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
-        self.model.optimize_for_inference()
-        logger.info("Model optimization complete")
+        try:
+            self.model.optimize_for_inference()
+            self.optimized = True
+            logger.info("Model optimization complete")
+        except Exception as e:
+            logger.warning(
+                "optimize_for_inference() failed (%s). Using eager model without TorchScript."
+                " You can revisit once RF-DETR tracing supports non-tensor outputs.",
+                e,
+            )
         
         # Apply torch.compile if PyTorch 2.0+ (additional 30% speedup)
-        if hasattr(torch, '__version__') and torch.__version__ >= "2.0":
+        if self.optimized and hasattr(torch, '__version__') and torch.__version__ >= "2.0":
             if hasattr(self.model, 'model'):
                 try:
                     logger.info("Applying torch.compile() for additional speedup...")
