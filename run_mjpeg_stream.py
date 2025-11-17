@@ -15,6 +15,29 @@ from app.utils import VideoReader, load_config, merge_configs, MJPEGServer
 from app.camera import VirtualCamera
 
 
+def prepare_detection_frame(image: np.ndarray, max_width: int = None, max_height: int = None):
+    """Resize frame for detection if it exceeds processing limits."""
+    h, w = image.shape[:2]
+    scale_factor = 1.0
+
+    if max_width and max_width > 0 and w > max_width:
+        scale_factor = max(scale_factor, w / max_width)
+    if max_height and max_height > 0 and h > max_height:
+        scale_factor = max(scale_factor, h / max_height)
+
+    if scale_factor > 1.0:
+        target_w = max(1, int(round(w / scale_factor)))
+        target_h = max(1, int(round(h / scale_factor)))
+        resized = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        scale_w = w / target_w
+        scale_h = h / target_h
+    else:
+        resized = image
+        scale_w = scale_h = 1.0
+
+    return resized, scale_w, scale_h
+
+
 class SmoothZoom:
     def __init__(self, min_zoom: float = 1.0, max_zoom: float = 2.5, stiffness: float = 0.08, damping: float = 0.35, max_rate: float = 0.25, max_rate_in: float = None, max_rate_out: float = None, accel_limit: float = None):
         self.min_zoom = min_zoom
@@ -130,6 +153,11 @@ def main():
     target_output_width = int(output_config.get('width', 1920))
     target_output_height = int(output_config.get('height', 1080))
 
+    processing_config = config.get('processing', {})
+    processing_width = int(processing_config.get('detection_width', 1920))
+    processing_height = int(processing_config.get('detection_height', 1080))
+    print(f"   → Detection resolution cap: {processing_width}x{processing_height}")
+
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
     print(f"\n[5/5] Opening video: {video_path}")
     reader = VideoReader(video_path)
@@ -138,8 +166,10 @@ def main():
     # Initialize virtual camera
     # Base crop size for normal view - will zoom progressively when tracking
     camera_config = config.get('camera', {})
-    base_output_width = int(camera_config.get('base_output_width', max(1, target_output_width // 2)))
-    base_output_height = int(camera_config.get('base_output_height', max(1, target_output_height // 2)))
+    base_output_width = int(camera_config.get('base_output_width', target_output_width))
+    base_output_height = int(camera_config.get('base_output_height', target_output_height))
+    base_output_width = min(base_output_width, reader.width)
+    base_output_height = min(base_output_height, reader.height)
 
     virtual_camera = VirtualCamera(
         frame_width=reader.width,
@@ -267,18 +297,42 @@ def main():
                     frame_in = frame[ry1:ry2, rx1:rx2]
                     use_roi = True
                     offx, offy = rx1, ry1
-                    det_result = detector.predict_ball_only(
+                    model_input, scale_w, scale_h = prepare_detection_frame(
                         frame_in,
+                        processing_width,
+                        processing_height
+                    )
+                    det_result = detector.predict_ball_only(
+                        model_input,
                         ball_class_id,
                         use_temporal_filtering=False,
                         return_candidates=True
                     )
                 else:
+                    model_input, scale_w, scale_h = prepare_detection_frame(
+                        frame,
+                        processing_width,
+                        processing_height
+                    )
                     det_result = detector.predict_ball_only(
-                        frame, 
+                        model_input, 
                         ball_class_id,
                         use_temporal_filtering=True,
                         return_candidates=True
+                    )
+                if det_result[0] is not None:
+                    x, y, w_box, h_box, conf = det_result[0]
+                    det_result = (
+                        (x * scale_w, y * scale_h, w_box * scale_w, h_box * scale_h, conf),
+                        det_result[1]
+                    )
+                if det_result[1]:
+                    det_result = (
+                        det_result[0],
+                        [
+                            (d[0] * scale_w, d[1] * scale_h, d[2] * scale_w, d[3] * scale_h, d[4], d[5])
+                            for d in det_result[1]
+                        ]
                     )
                 inf_time = (time.time() - start_inf) * 1000
             else:
