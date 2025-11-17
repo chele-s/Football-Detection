@@ -35,7 +35,8 @@ class BallDetector:
         imgsz: int = 640,
         enable_tensorrt: bool = False,
         multi_scale: bool = False,
-        warmup_iterations: int = 3
+        warmup_iterations: int = 3,
+        optimize_compile: bool = False
     ):
         try:
             from rfdetr import RFDETRMedium
@@ -49,6 +50,7 @@ class BallDetector:
         self.enable_tensorrt = enable_tensorrt
         self.multi_scale = multi_scale
         self.warmup_iterations = warmup_iterations
+        self.optimize_compile = optimize_compile
         
         if device is None:
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -92,15 +94,31 @@ class BallDetector:
         
         self.optimized = False
         logger.info("Applying optimize_for_inference() - CRITICAL STEP")
-        try:
-            self.model.optimize_for_inference()
-            self.optimized = True
-            logger.info("Model optimization complete")
-        except Exception as e:
+        compile_preferences = []
+        if self.optimize_compile:
+            compile_preferences.append(True)
+        compile_preferences.append(False)
+
+        for compile_flag in compile_preferences:
+            try:
+                self.model.optimize_for_inference(compile=compile_flag)
+                self.optimized = True
+                logger.info(
+                    "Model optimization complete%s",
+                    " (torchscript trace)" if compile_flag else " (export-only)",
+                )
+                break
+            except Exception as e:
+                logger.warning(
+                    "optimize_for_inference(compile=%s) failed: %s",
+                    compile_flag,
+                    e,
+                )
+
+        if not self.optimized:
             logger.warning(
-                "optimize_for_inference() failed (%s). Using eager model without TorchScript."
-                " You can revisit once RF-DETR tracing supports non-tensor outputs.",
-                e,
+                "optimize_for_inference() unavailable. Using eager model without TorchScript."
+                " You can revisit once RF-DETR tracing supports non-tensor outputs."
             )
         
         # Apply torch.compile if PyTorch 2.0+ (additional 30% speedup)

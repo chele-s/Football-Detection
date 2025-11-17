@@ -86,7 +86,8 @@ def main():
         device='cuda',
         half_precision=config['model'].get('half_precision', True),
         imgsz=config['model'].get('imgsz', 640),
-        warmup_iterations=3
+        warmup_iterations=3,
+        optimize_compile=config['model'].get('optimize_compile', True)
     )
     print(f"   ✓ Model loaded on GPU: {torch.cuda.get_device_name(0)}")
     
