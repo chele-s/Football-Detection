@@ -19,6 +19,7 @@ from typing import Optional, Tuple, Union
 from pathlib import Path
 import subprocess
 import json
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,19 @@ logger = logging.getLogger(__name__)
 try:
     import PyNvCodec as nvc
     PYNVCODEC_AVAILABLE = True
+    logger.info("✓ PyNvCodec imported successfully")
 except ImportError:
     PYNVCODEC_AVAILABLE = False
     logger.warning(
         "PyNvCodec not installed. GPU video I/O disabled. "
-        "Install with: pip install git+https://github.com/NVIDIA/VideoProcessingFramework"
+        "Install with: pip install PyNvCodec or pip install git+https://github.com/NVIDIA/VideoProcessingFramework"
     )
+except Exception as e:
+    PYNVCODEC_AVAILABLE = False
+    logger.error(f"PyNvCodec import failed: {e}")
+
+# Export availability flag
+GPU_AVAILABLE = PYNVCODEC_AVAILABLE and torch.cuda.is_available()
 
 
 class GPUVideoReader:
@@ -58,25 +66,72 @@ class GPUVideoReader:
         self.device = device if isinstance(device, int) else int(device.split(':')[-1])
         self.decode_surfaces = decode_surfaces
         
+        # Verify CUDA device is available before initializing PyNvCodec
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA is not available. PyNvCodec requires a CUDA-capable GPU.\n"
+                "Check: nvidia-smi to verify GPU is detected."
+            )
+        
+        if self.device >= torch.cuda.device_count():
+            raise RuntimeError(
+                f"CUDA device {self.device} not found. Available devices: 0-{torch.cuda.device_count()-1}"
+            )
+        
+        # Verify GPU is accessible by PyTorch CUDA
+        try:
+            test_tensor = torch.zeros(1, device=f'cuda:{self.device}')
+            del test_tensor
+            logger.info(f"✓ CUDA device {self.device} verified: {torch.cuda.get_device_name(self.device)}")
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot access CUDA device {self.device}. Error: {e}\n"
+                "This may be due to:\n"
+                "  1. GPU not properly configured\n"
+                "  2. CUDA driver/runtime mismatch\n"
+                "  3. Insufficient permissions\n"
+                "Run 'nvidia-smi' to verify GPU status."
+            )
+        
         # Get video metadata first
         self._get_video_info()
         
         # Initialize NVDEC decoder
         try:
+            logger.info(f"Initializing PyNvDecoder for GPU {self.device}...")
             self.decoder = nvc.PyNvDecoder(
                 self.source,
                 self.device
             )
             logger.info(f"✓ NVDEC decoder initialized on GPU {self.device}")
         except Exception as e:
-            logger.error(f"Failed to initialize NVDEC: {e}")
-            raise RuntimeError(
-                f"NVDEC initialization failed. Check:\n"
-                f"  1. GPU supports NVDEC (check: nvidia-smi)\n"
-                f"  2. Video codec is supported (H.264/H.265)\n"
-                f"  3. CUDA drivers are up to date\n"
-                f"Error: {e}"
-            )
+            error_msg = str(e)
+            logger.error(f"Failed to initialize NVDEC: {error_msg}")
+            
+            # Check if it's a CUDA_ERROR_NO_DEVICE
+            if "CUDA_ERROR_NO_DEVICE" in error_msg or "no CUDA-capable device" in error_msg:
+                raise RuntimeError(
+                    f"PyNvCodec cannot access CUDA device {self.device}.\n"
+                    f"This is a PyNvCodec-specific issue. Possible causes:\n"
+                    f"  1. PyNvCodec not built with CUDA support\n"
+                    f"  2. PyNvCodec CUDA version mismatch with system CUDA\n"
+                    f"  3. PyNvCodec requires specific GPU architecture\n"
+                    f"  4. Windows-specific PyNvCodec compatibility issues\n\n"
+                    f"Solutions:\n"
+                    f"  - Reinstall PyNvCodec: pip uninstall PyNvCodec && pip install PyNvCodec\n"
+                    f"  - Use CPU pipeline instead: run_mjpeg_stream.py\n"
+                    f"  - Check PyNvCodec compatibility: https://github.com/NVIDIA/VideoProcessingFramework\n\n"
+                    f"Original error: {error_msg}"
+                )
+            else:
+                raise RuntimeError(
+                    f"NVDEC initialization failed. Check:\n"
+                    f"  1. GPU supports NVDEC (check: nvidia-smi)\n"
+                    f"  2. Video codec is supported (H.264/H.265)\n"
+                    f"  3. CUDA drivers are up to date\n"
+                    f"  4. Video file is valid and accessible\n\n"
+                    f"Error: {error_msg}"
+                )
         
         # Color space converter (NV12 → RGB)
         self.width = self.decoder.Width()

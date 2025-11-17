@@ -122,8 +122,16 @@ def main():
     print(f"\n[5/5] Opening video with GPU decoder (NVDEC)...")
     print(f"   Source: {video_path}")
     
-    reader = GPUVideoReader(video_path, device=0)
-    print(f"✅ GPU decoder ready: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+    try:
+        reader = GPUVideoReader(video_path, device=0)
+        print(f"✅ GPU decoder ready: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+    except RuntimeError as e:
+        print(f"\n❌ GPU decoder initialization failed:")
+        print(f"   {str(e)}")
+        print(f"\n💡 SOLUTION: Use the CPU pipeline instead:")
+        print(f"   python run_mjpeg_stream.py")
+        print(f"\n   The CPU pipeline is slower but more compatible.")
+        sys.exit(1)
     
     # Initialize virtual camera
     base_output_width = 960
