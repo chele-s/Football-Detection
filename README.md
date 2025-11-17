@@ -99,7 +99,48 @@ Input Source (File/RTMP/YouTube)
 
 ## Installation
 
-### Quick Start
+### Automated Production Setup (Recommended)
+
+For a fully automated installation that handles all known issues:
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/Football-Detection.git
+cd Football-Detection
+
+# Run production setup script
+chmod +x setup_production.sh
+./setup_production.sh
+```
+
+This script automatically:
+- ✓ Validates system requirements and GPU
+- ✓ Installs system dependencies (ffmpeg, cmake, CUDA toolkit)
+- ✓ Aligns NVIDIA driver/library versions (fixes `unsupported device` errors)
+- ✓ Verifies NVDEC/NVENC support
+- ✓ Creates Python 3.10 virtual environment
+- ✓ Installs all Python dependencies
+- ✓ Builds PyNvCodec with **CMake CMP0148 policy fix**
+- ✓ Configures library paths (LD_LIBRARY_PATH)
+- ✓ Creates service management scripts (`start_stream.sh`, `stop_stream.sh`)
+- ✓ Runs comprehensive diagnostics
+
+**After installation:**
+
+```bash
+# Activate environment
+source rf-detr-venv-310/bin/activate
+
+# Run extended diagnostics
+python diagnose_gpu.py
+
+# Start streaming
+./start_stream.sh
+```
+
+### Manual Installation
+
+If you prefer manual setup or need to customize:
 
 ```bash
 # Clone repository
