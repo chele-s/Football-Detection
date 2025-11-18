@@ -285,8 +285,8 @@ def main():
     # Loop detection and recovery
     last_tracking_state = False
     tracking_state_changes = []
-    loop_detection_window = 45  # frames (increased from 30 for less sensitivity)
-    loop_threshold = 8  # changes in window (increased from 5 to reduce false positives)
+    loop_detection_window = 120  # frames (increased to ~4 seconds)
+    loop_threshold = 20  # changes in window (increased to allow more fluctuation)
     consecutive_det_frames = 0  # consecutive frames with detection
     target_zoom_before_loss = 1.0
 
