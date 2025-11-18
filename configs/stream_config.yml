@@ -1,5 +1,5 @@
 stream:
-  input_url: "clean_video_4k.webm"
+  input_url: "clean_video_4k.mp4"
   output_url: "rtmp://localhost/live/output"
   target_fps: 20
   bitrate: "4000k"
