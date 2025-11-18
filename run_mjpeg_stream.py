@@ -569,7 +569,9 @@ def main():
                             x = current_cx + math.copysign(lost_pan_limit, dx)
                         if abs(dy) > lost_pan_limit:
                             y = current_cy + math.copysign(lost_pan_limit, dy)
-                    state = tracker.get_state()
+                
+                # Get tracker state (must be outside the if/else block)
+                state = tracker.get_state()
                 vmag = state['velocity_magnitude'] if state else 0.0
                 kalman_ok = state['kalman_stable'] if state else True
                 if last_stable is None:
