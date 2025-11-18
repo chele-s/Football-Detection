@@ -38,6 +38,66 @@ def prepare_detection_frame(image: np.ndarray, max_width: int = None, max_height
     return resized, scale_w, scale_h
 
 
+def prepare_detection_tensor(image: np.ndarray, max_width: int = None, max_height: int = None, device: str = 'cuda'):
+    """Resize frame for detection using GPU to avoid CPU bottleneck."""
+    h, w = image.shape[:2]
+    scale_factor = 1.0
+
+    if max_width and max_width > 0 and w > max_width:
+        scale_factor = max(scale_factor, w / max_width)
+    if max_height and max_height > 0 and h > max_height:
+        scale_factor = max(scale_factor, h / max_height)
+
+    if scale_factor > 1.0:
+        target_w = max(1, int(round(w / scale_factor)))
+        target_h = max(1, int(round(h / scale_factor)))
+        scale_w = w / target_w
+        scale_h = h / target_h
+        
+        # Convert to tensor and move to GPU
+        # OpenCV image is (H, W, C) BGR
+        # We need (1, C, H, W) RGB for RF-DETR usually, but let's check detector.py
+        # detector.py handles BGR->RGB conversion if input is numpy, but if tensor it expects (3, H, W)
+        # So we should do BGR->RGB here or let detector handle it?
+        # detector.py: "if frame.shape[0] != 3 ... frame = frame.permute(2, 0, 1)"
+        # detector.py: "if frame.dtype == torch.uint8: frame = frame.float() / 255.0"
+        
+        # Efficient path:
+        # 1. To Tensor (on CPU first as from_numpy is zero-copy usually)
+        tensor = torch.from_numpy(image)
+        # 2. Move to GPU
+        tensor = tensor.to(device, non_blocking=True)
+        # 3. Permute to (C, H, W) -> (3, H, W)
+        tensor = tensor.permute(2, 0, 1)
+        # 4. BGR to RGB (swap channels 0 and 2)
+        tensor = tensor[[2, 1, 0], :, :]
+        # 5. Normalize to 0-1 float
+        tensor = tensor.float().div_(255.0)
+        # 6. Add batch dim for interpolate: (1, 3, H, W)
+        tensor = tensor.unsqueeze(0)
+        
+        # 7. Resize on GPU
+        tensor = torch.nn.functional.interpolate(
+            tensor, 
+            size=(target_h, target_w), 
+            mode='bilinear', 
+            align_corners=False
+        )
+        
+        # 8. Remove batch dim: (3, H, W)
+        tensor = tensor.squeeze(0)
+        
+    else:
+        # No resize needed, but still convert to tensor for GPU pipeline
+        scale_w = scale_h = 1.0
+        tensor = torch.from_numpy(image).to(device, non_blocking=True)
+        tensor = tensor.permute(2, 0, 1) # (C, H, W)
+        tensor = tensor[[2, 1, 0], :, :] # BGR -> RGB
+        tensor = tensor.float().div_(255.0)
+
+    return tensor, scale_w, scale_h
+
+
 class SmoothZoom:
     def __init__(self, min_zoom: float = 1.0, max_zoom: float = 2.5, stiffness: float = 0.08, damping: float = 0.35, max_rate: float = 0.25, max_rate_in: float = None, max_rate_out: float = None, accel_limit: float = None):
         self.min_zoom = min_zoom
@@ -309,7 +369,8 @@ def main():
                     frame_in = frame[ry1:ry2, rx1:rx2]
                     use_roi = True
                     offx, offy = rx1, ry1
-                    model_input, scale_w, scale_h = prepare_detection_frame(
+                    # GPU-accelerated resizing
+                    model_input, scale_w, scale_h = prepare_detection_tensor(
                         frame_in,
                         processing_width,
                         processing_height
@@ -321,7 +382,8 @@ def main():
                         return_candidates=True
                     )
                 else:
-                    model_input, scale_w, scale_h = prepare_detection_frame(
+                    # GPU-accelerated resizing
+                    model_input, scale_w, scale_h = prepare_detection_tensor(
                         frame,
                         processing_width,
                         processing_height
