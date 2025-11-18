@@ -1,5 +1,5 @@
 stream:
-  input_url: "clean_video_4k.mp4"
+  input_url: "Test1 (1).mp4"
   output_url: "rtmp://localhost/live/output"
   target_fps: 20
   bitrate: "4000k"
@@ -8,16 +8,16 @@ stream:
   debug_mode: false
 
 output:
-  width: 3840
-  height: 1440
+  width: 4608
+  height: 1728
 
 processing:
   detection_width: 1280
   detection_height: 720
 
 camera:
-  base_output_width: 3840
-  base_output_height: 1440
+  base_output_width: 4608
+  base_output_height: 1728
   dead_zone: 0.10
   anticipation: 0.35
   zoom_padding: 1.2
