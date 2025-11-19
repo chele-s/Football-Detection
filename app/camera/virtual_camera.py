@@ -168,7 +168,7 @@ class VirtualCamera:
             freq=smoothing_freq,
             min_cutoff=smoothing_min_cutoff,
             beta=smoothing_beta,
-            adaptive_beta=True
+            d_cutoff=1.0
         )
         
         self.adaptive_deadzone = AdaptiveDeadZone(
@@ -180,8 +180,9 @@ class VirtualCamera:
         self.trajectory_predictor = TrajectoryPredictor(history_size=30)
         
         if use_pid:
-            self.pid_x = PIDController(kp=0.8, ki=0.01, kd=0.15, output_limits=(-500, 500))
-            self.pid_y = PIDController(kp=0.8, ki=0.01, kd=0.15, output_limits=(-500, 500))
+            # Reduced Kd from 0.15 to 0.05 to prevent noise amplification (jitter)
+            self.pid_x = PIDController(kp=0.8, ki=0.01, kd=0.05, output_limits=(-500, 500))
+            self.pid_y = PIDController(kp=0.8, ki=0.01, kd=0.05, output_limits=(-500, 500))
         
         self.current_center_x = frame_width // 2
         self.current_center_y = frame_height // 2

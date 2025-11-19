@@ -4,6 +4,7 @@ from typing import Optional, Tuple, List, Dict
 from collections import deque
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import chi2
+from app.camera.one_euro_filter import OneEuroFilter
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,11 @@ class BallTracker:
         self.allow_jitter_mode = allow_jitter_mode
         self.detection_smoothing = max(0.0, min(1.0, float(detection_smoothing)))
         
+        # Initialize One Euro Filter for robust smoothing
+        # min_cutoff=0.1 (slow movement -> heavy smoothing)
+        # beta=0.05 (fast movement -> low latency)
+        self.one_euro = OneEuroFilter(freq=30.0, min_cutoff=0.1, beta=0.05, d_cutoff=1.0)
+        
         self.kalman = ExtendedKalmanFilter(dt=dt, process_noise=0.01, measurement_noise=5.0)
         self.lost_frames = 0
         self.track_id = 0
@@ -232,14 +238,12 @@ class BallTracker:
             x_center, y_center, width, height, confidence = detection
 
             if self.detection_smoothing > 0.0:
-                new_pos = np.array([x_center, y_center], dtype=np.float64)
-                if self.filtered_position is None:
-                    self.filtered_position = new_pos
-                else:
-                    alpha = self.detection_smoothing
-                    self.filtered_position = alpha * new_pos + (1.0 - alpha) * self.filtered_position
-                x_center = float(self.filtered_position[0])
-                y_center = float(self.filtered_position[1])
+                # Use One Euro Filter instead of simple exponential smoothing
+                # This provides better jitter reduction while maintaining responsiveness
+                smooth_x, smooth_y = self.one_euro(x_center, y_center, timestamp=None) # Timestamp handled internally if needed or passed
+                
+                x_center = float(smooth_x)
+                y_center = float(smooth_y)
                 detection = (x_center, y_center, width, height, confidence)
             
             if self.last_accepted_position is not None:
@@ -696,6 +700,7 @@ class BallTracker:
             'erratic_detections': 0,
             'jump_rejections': 0
         }
+        self.one_euro.reset()
     
     def get_state(self) -> Dict:
         velocity = self.get_velocity()

@@ -1,205 +1,130 @@
 """
-Implementación del filtro One-Euro para suavizado adaptativo de coordenadas.
+Implementación robusta y optimizada del filtro One-Euro.
 
-El algoritmo One-Euro es ideal para tracking en tiempo real porque:
-- Reduce el ruido cuando el objeto se mueve lentamente
-- Responde rápidamente cuando el objeto se mueve rápido
-- Tiene latencia ultra-baja (crítico para <33ms por frame)
-
-Paper original: http://cristal.univ-lille.fr/~casiez/1euro/
+Referencia: http://cristal.univ-lille.fr/~casiez/1euro/
 """
 
 import math
+import time
 import logging
 import numpy as np
 from typing import Optional, Tuple
-from collections import deque
 
 logger = logging.getLogger(__name__)
 
+class LowPassFilter:
+    """
+    Filtro paso bajo exponencial simple.
+    x_i = alpha * x_i + (1 - alpha) * x_{i-1}
+    """
+    __slots__ = ('alpha', 'y', 's')
 
-class AdaptiveLowPassFilter:
-    def __init__(self, alpha: float, outlier_threshold: float = 3.0):
+    def __init__(self, alpha: float, init_value: float = 0.0):
         self.alpha = alpha
-        self.outlier_threshold = outlier_threshold
-        self.y = None
-        self.s = None
-        self.velocity_history = deque(maxlen=10)
-        self.value_history = deque(maxlen=30)
-    
-    def filter(self, x: float, alpha: Optional[float] = None) -> float:
-        if alpha is None:
-            alpha = self.alpha
+        self.y = init_value
+        self.s = init_value
+        self.initialized = False
+
+    def filter(self, value: float, alpha: float = None) -> float:
+        if alpha is not None:
+            self.alpha = alpha
         
-        alpha = np.clip(alpha, 0.0, 1.0)
-        
-        if self.y is None:
-            self.s = x
-            self.y = x
-            self.value_history.append(x)
-            return self.s
-        
-        if self._is_outlier(x):
-            logger.debug(f"Outlier detectado: {x:.2f}, usando predicción")
-            x = self._predict_value()
-        
-        self.s = alpha * x + (1 - alpha) * self.s
-        self.y = self.s
-        self.value_history.append(self.s)
-        
-        return self.s
-    
-    def _is_outlier(self, x: float) -> bool:
-        if len(self.value_history) < 5:
-            return False
-        
-        recent = list(self.value_history)[-10:]
-        mean = np.mean(recent)
-        std = np.std(recent)
-        
-        if std < 1e-6:
-            return False
-        
-        z_score = abs((x - mean) / std)
-        return z_score > self.outlier_threshold
-    
-    def _predict_value(self) -> float:
-        if len(self.value_history) < 2:
-            return self.s
-        
-        recent = list(self.value_history)[-5:]
-        if len(recent) >= 2:
-            velocity = (recent[-1] - recent[-2])
-            return recent[-1] + velocity
-        
-        return self.s
+        if not self.initialized:
+            self.s = value
+            self.y = value
+            self.initialized = True
+        else:
+            self.s = self.alpha * value + (1.0 - self.alpha) * self.s
+            self.y = self.s
+        return self.y
+
+    def filter_with_alpha(self, value: float, alpha: float) -> float:
+        if not self.initialized:
+            self.s = value
+            self.y = value
+            self.initialized = True
+        else:
+            self.s = alpha * value + (1.0 - alpha) * self.s
+            self.y = self.s
+        return self.y
+
+    def reset(self):
+        self.initialized = False
 
 
 class OneEuroFilter:
+    """
+    Filtro One-Euro optimizado para tracking en tiempo real.
+    Minimiza el jitter (temblores) en bajas velocidades y el lag en altas velocidades.
+    """
     def __init__(
         self,
-        freq: float = 30.0,
-        min_cutoff: float = 1.0,
-        beta: float = 0.007,
-        d_cutoff: float = 1.0,
-        outlier_threshold: float = 3.0,
-        adaptive_beta: bool = True
+        freq: float = 30.0,     # Frecuencia estimada de entrada
+        min_cutoff: float = 1.0, # Frecuencia de corte mínima (para estados estables)
+        beta: float = 0.007,     # Coeficiente de velocidad (sensibilidad al movimiento)
+        d_cutoff: float = 1.0    # Frecuencia de corte para la derivada
     ):
-        self.freq = freq
-        self.min_cutoff = min_cutoff
-        self.beta = beta
-        self.d_cutoff = d_cutoff
-        self.adaptive_beta = adaptive_beta
-        self.outlier_threshold = outlier_threshold
+        self.freq = float(freq)
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.d_cutoff = float(d_cutoff)
         
-        self.x_filter = AdaptiveLowPassFilter(self._alpha(min_cutoff), outlier_threshold)
-        self.dx_filter = AdaptiveLowPassFilter(self._alpha(d_cutoff), outlier_threshold)
-        
-        self.y_filter = AdaptiveLowPassFilter(self._alpha(min_cutoff), outlier_threshold)
-        self.dy_filter = AdaptiveLowPassFilter(self._alpha(d_cutoff), outlier_threshold)
+        self.x_filter = LowPassFilter(self._alpha(self.min_cutoff))
+        self.dx_filter = LowPassFilter(self._alpha(self.d_cutoff))
+        self.y_filter = LowPassFilter(self._alpha(self.min_cutoff))
+        self.dy_filter = LowPassFilter(self._alpha(self.d_cutoff))
         
         self.last_time = None
-        self.velocity_history = deque(maxlen=20)
-        self.jerk_history = deque(maxlen=10)
-        self.last_velocity = np.array([0.0, 0.0])
-        
-        self.stats = {
-            'total_calls': 0,
-            'outliers_detected': 0,
-            'beta_adjustments': 0
-        }
-    
+        self.last_x = None
+        self.last_y = None
+
     def _alpha(self, cutoff: float) -> float:
         tau = 1.0 / (2 * math.pi * cutoff)
         te = 1.0 / self.freq
         return 1.0 / (1.0 + tau / te)
-    
+
     def __call__(self, x: float, y: float, timestamp: Optional[float] = None) -> Tuple[float, float]:
-        self.stats['total_calls'] += 1
-        
+        # Actualizar frecuencia si tenemos timestamps
         if timestamp is not None and self.last_time is not None:
             dt = timestamp - self.last_time
-            if dt > 1e-6:
+            if dt > 0:
                 self.freq = 1.0 / dt
-        
         self.last_time = timestamp
-        
-        dx = 0.0 if self.x_filter.y is None else (x - self.x_filter.y) * self.freq
-        edx = self.dx_filter.filter(dx, self._alpha(self.d_cutoff))
-        
-        dy = 0.0 if self.y_filter.y is None else (y - self.y_filter.y) * self.freq
-        edy = self.dy_filter.filter(dy, self._alpha(self.d_cutoff))
-        
-        velocity_magnitude = math.sqrt(edx**2 + edy**2)
-        self.velocity_history.append(velocity_magnitude)
-        
-        current_velocity = np.array([edx, edy])
-        jerk = np.linalg.norm(current_velocity - self.last_velocity) * self.freq
-        self.jerk_history.append(jerk)
-        self.last_velocity = current_velocity
-        
-        effective_beta = self._compute_adaptive_beta() if self.adaptive_beta else self.beta
-        
-        cutoff_x = self.min_cutoff + effective_beta * abs(edx)
-        cutoff_y = self.min_cutoff + effective_beta * abs(edy)
-        
-        cutoff_x = np.clip(cutoff_x, self.min_cutoff, 10.0)
-        cutoff_y = np.clip(cutoff_y, self.min_cutoff, 10.0)
-        
-        x_filtered = self.x_filter.filter(x, self._alpha(cutoff_x))
-        y_filtered = self.y_filter.filter(y, self._alpha(cutoff_y))
-        
-        if self.stats['total_calls'] % 100 == 0:
-            logger.debug(f"Filter stats: calls={self.stats['total_calls']}, "
-                        f"outliers={self.stats['outliers_detected']}, "
-                        f"beta_adj={self.stats['beta_adjustments']}, "
-                        f"vel_mag={velocity_magnitude:.2f}")
-        
-        return x_filtered, y_filtered
-    
-    def _compute_adaptive_beta(self) -> float:
-        if len(self.velocity_history) < 5:
-            return self.beta
-        
-        recent_velocities = list(self.velocity_history)[-10:]
-        avg_velocity = np.mean(recent_velocities)
-        velocity_std = np.std(recent_velocities)
-        
-        if len(self.jerk_history) >= 3:
-            avg_jerk = np.mean(list(self.jerk_history)[-5:])
-            jerk_factor = np.clip(avg_jerk / 1000.0, 0.5, 2.0)
+
+        # Estimar derivada (velocidad)
+        if self.x_filter.initialized:
+            dx_raw = (x - self.x_filter.y) * self.freq
+            dy_raw = (y - self.y_filter.y) * self.freq
         else:
-            jerk_factor = 1.0
-        
-        velocity_factor = 1.0 + (avg_velocity / 100.0)
-        stability_factor = 1.0 / (1.0 + velocity_std)
-        
-        adaptive_beta = self.beta * velocity_factor * jerk_factor * stability_factor
-        adaptive_beta = np.clip(adaptive_beta, self.beta * 0.5, self.beta * 3.0)
-        
-        if abs(adaptive_beta - self.beta) > 0.001:
-            self.stats['beta_adjustments'] += 1
-        
-        return adaptive_beta
-    
-    def get_velocity(self) -> Tuple[float, float]:
-        return tuple(self.last_velocity)
-    
-    def get_stats(self) -> dict:
-        return self.stats.copy()
-    
+            dx_raw = 0.0
+            dy_raw = 0.0
+
+        # Filtrar derivada
+        edx = self.dx_filter.filter_with_alpha(dx_raw, self._alpha(self.d_cutoff))
+        edy = self.dy_filter.filter_with_alpha(dy_raw, self._alpha(self.d_cutoff))
+
+        # Calcular cutoff adaptativo basado en la velocidad
+        # cutoff = min_cutoff + beta * |edx|
+        # A mayor velocidad, mayor cutoff (menos filtrado, menos lag)
+        # A menor velocidad, menor cutoff (más filtrado, menos jitter)
+        cutoff_x = self.min_cutoff + self.beta * abs(edx)
+        cutoff_y = self.min_cutoff + self.beta * abs(edy)
+
+        # Filtrar señal principal
+        x_filtered = self.x_filter.filter_with_alpha(x, self._alpha(cutoff_x))
+        y_filtered = self.y_filter.filter_with_alpha(y, self._alpha(cutoff_y))
+
+        return x_filtered, y_filtered
+
     def set_smoothing_level(self, level: float):
-        self.min_cutoff = np.clip(level, 0.1, 5.0)
-        logger.debug(f"Smoothing level adjusted to min_cutoff={self.min_cutoff:.2f}")
-    
+        """Ajusta dinámicamente el nivel de suavizado (min_cutoff)."""
+        # level bajo (0.1) = mucho suavizado (lento)
+        # level alto (5.0) = poco suavizado (rápido)
+        self.min_cutoff = max(0.01, float(level))
+
     def reset(self):
-        logger.info("Resetting One-Euro Filter")
-        self.x_filter = AdaptiveLowPassFilter(self._alpha(self.min_cutoff), self.outlier_threshold)
-        self.dx_filter = AdaptiveLowPassFilter(self._alpha(self.d_cutoff), self.outlier_threshold)
-        self.y_filter = AdaptiveLowPassFilter(self._alpha(self.min_cutoff), self.outlier_threshold)
-        self.dy_filter = AdaptiveLowPassFilter(self._alpha(self.d_cutoff), self.outlier_threshold)
+        self.x_filter.reset()
+        self.dx_filter.reset()
+        self.y_filter.reset()
+        self.dy_filter.reset()
         self.last_time = None
-        self.velocity_history.clear()
-        self.jerk_history.clear()
-        self.last_velocity = np.array([0.0, 0.0])
-        self.stats = {'total_calls': 0, 'outliers_detected': 0, 'beta_adjustments': 0}
