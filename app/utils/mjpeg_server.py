@@ -81,6 +81,7 @@ class MJPEGServer:
                         file_path = os.path.join(self.server_instance.hls_dir, filename)
                         
                         if os.path.exists(file_path):
+                            # logger.debug(f"Serving HLS file: {filename}")
                             self.send_response(200)
                             if filename.endswith('.m3u8'):
                                 self.send_header('Content-type', 'application/vnd.apple.mpegurl')
@@ -92,6 +93,7 @@ class MJPEGServer:
                             with open(file_path, 'rb') as f:
                                 self.wfile.write(f.read())
                         else:
+                            logger.warning(f"HLS file not found: {file_path}")
                             self.send_error(404)
                     except Exception as e:
                         logger.error(f"Error serving HLS file: {e}")
