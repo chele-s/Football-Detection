@@ -1,6 +1,7 @@
 import cv2
 import threading
 import time
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 import logging
@@ -8,8 +9,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 class MJPEGServer:
-    def __init__(self, port=8080):
+    def __init__(self, port=8080, hls_dir=None):
         self.port = port
+        self.hls_dir = hls_dir
         self.frame = None
         self.lock = threading.Lock()
         self.server = None
@@ -59,6 +61,27 @@ class MJPEGServer:
                             time.sleep(0.033)
                     except:
                         pass
+                elif self.path.startswith('/hls/') and self.server_instance.hls_dir:
+                    try:
+                        filename = self.path.split('/')[-1]
+                        file_path = os.path.join(self.server_instance.hls_dir, filename)
+                        
+                        if os.path.exists(file_path):
+                            self.send_response(200)
+                            if filename.endswith('.m3u8'):
+                                self.send_header('Content-type', 'application/vnd.apple.mpegurl')
+                            elif filename.endswith('.ts'):
+                                self.send_header('Content-type', 'video/MP2T')
+                            self.send_header('Access-Control-Allow-Origin', '*')
+                            self.end_headers()
+                            
+                            with open(file_path, 'rb') as f:
+                                self.wfile.write(f.read())
+                        else:
+                            self.send_error(404)
+                    except Exception as e:
+                        logger.error(f"Error serving HLS file: {e}")
+                        self.send_error(500)
                 else:
                     self.send_error(404)
         

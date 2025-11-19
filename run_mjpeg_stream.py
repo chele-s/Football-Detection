@@ -6,6 +6,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import math
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -24,6 +25,7 @@ except ModuleNotFoundError:
     from app.inference import BallDetector
 from app.tracking import BallTracker
 from app.utils import VideoReader, load_config, merge_configs, MJPEGServer
+from app.utils.hls_streamer import HLSStreamer
 from app.camera import VirtualCamera
 
 
@@ -206,11 +208,21 @@ def main():
     
     # Start MJPEG server
     mjpeg_port = config.get('stream', {}).get('mjpeg_port', 8554)
-    logger.info(f"[4/5] Starting MJPEG server on port {mjpeg_port}...")
-    mjpeg_server = MJPEGServer(port=mjpeg_port)
+    hls_output_dir = os.path.join(os.getcwd(), 'hls_output')
+    
+    logger.info(f"[4/5] Starting Stream Server on port {mjpeg_port}...")
+    mjpeg_server = MJPEGServer(port=mjpeg_port, hls_dir=hls_output_dir)
     mjpeg_server.start()
-    logger.info("✅ MJPEG server started!")
-    logger.info("📺 Stream URL: http://localhost:8554/stream.mjpg")
+    
+    # Initialize HLS Streamer
+    target_output_width = int(config.get('output', {}).get('width', 1920))
+    target_output_height = int(config.get('output', {}).get('height', 1080))
+    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=target_output_width, height=target_output_height, fps=30)
+    hls_streamer.start()
+    
+    logger.info("✅ Stream Server started!")
+    logger.info(f"📺 MJPEG Stream: http://localhost:{mjpeg_port}/stream.mjpg")
+    logger.info(f"📺 HLS Stream:   http://localhost:{mjpeg_port}/hls/stream.m3u8")
     logger.info("💡 En Colab, usa ngrok para exponer el puerto 8554")
     
     # Open video
@@ -897,6 +909,7 @@ def main():
             )
             
             mjpeg_server.update_frame(display_frame)
+            hls_streamer.update_frame(display_frame)
             
             frame_count += 1
             
@@ -924,7 +937,9 @@ def main():
         if 'reader' in locals() and reader:
             reader.release()
         if 'mjpeg_server' in locals() and mjpeg_server:
-            # Assuming MJPEGServer has a stop or close method, or just let it die with the process
+            mjpeg_server.stop()
+        if 'hls_streamer' in locals() and hls_streamer:
+            hls_streamer.stop()
             pass
         print("✅ Resources released.")
 
