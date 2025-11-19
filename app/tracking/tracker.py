@@ -42,7 +42,17 @@ class ExtendedKalmanFilter:
         self.innovation_history = deque(maxlen=10)
         self.mahalanobis_history = deque(maxlen=10)
     
-    def predict(self) -> Tuple[float, float]:
+    def predict(self, dt: Optional[float] = None) -> Tuple[float, float]:
+        if dt is not None:
+            self.dt = dt
+            # Update F matrix with new dt
+            self.F[0, 2] = dt
+            self.F[1, 3] = dt
+            self.F[2, 4] = dt
+            self.F[3, 5] = dt
+            self.F[0, 4] = 0.5 * dt**2
+            self.F[1, 5] = 0.5 * dt**2
+
         self.x = self.F @ self.x
         self.P = self.F @ self.P @ self.F.T + self.Q
         
@@ -197,9 +207,14 @@ class BallTracker:
     def update(
         self,
         detection: Optional[Tuple[float, float, float, float, float]],
-        detections_list: Optional[List[Tuple[float, float, float, float, float]]] = None
+        detections_list: Optional[List[Tuple[float, float, float, float, float]]] = None,
+        dt: float = 1/30
     ) -> Optional[Tuple[float, float, bool]]:
         self.stats['total_updates'] += 1
+        
+        # Always predict first if initialized (Standard Kalman Filter cycle)
+        if self.kalman.initialized:
+            self.kalman.predict(dt)
         
         tracking_strength = min(self.consecutive_detections / 15.0, 1.0)
         is_stable = tracking_strength > 0.5
@@ -513,7 +528,8 @@ class BallTracker:
             self.kalman.set_measurement_noise(12.0)
         
         if self.lost_frames <= self.max_lost_frames and self.kalman.initialized:
-            pred_x, pred_y = self.kalman.predict()
+            # Prediction already done at start of update
+            pred_x, pred_y = float(self.kalman.x[0, 0]), float(self.kalman.x[1, 0])
             
             if detections_list and len(detections_list) > 0:
                 # 300px is ~15.6% of 1920, 800px is ~41.6%

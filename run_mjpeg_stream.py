@@ -391,8 +391,13 @@ def main():
     det_skip = 0
     
     try:
+        last_loop_start = time.time()
         while True:
             loop_start = time.time()
+            dt = loop_start - last_loop_start
+            last_loop_start = loop_start
+            if dt <= 0: dt = 1/30.0
+            if dt > 0.1: dt = 0.1
             det_ok = False
             
             ret, frame = reader.read()
@@ -554,7 +559,7 @@ def main():
                             filtered_dets.append(d)
                     all_detections = filtered_dets if filtered_dets else None
             
-            track_result = tracker.update(ball_detection, all_detections)
+            track_result = tracker.update(ball_detection, all_detections, dt=dt)
             
             if not camera_initialized and track_result:
                 x, y, is_tracking = track_result
