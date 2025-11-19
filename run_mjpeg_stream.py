@@ -53,17 +53,6 @@ def prepare_detection_tensor(image: np.ndarray, max_width: int = None, max_heigh
         target_h = max(1, int(round(h / scale_factor)))
         scale_w = w / target_w
         scale_h = h / target_h
-        
-        # Convert to tensor and move to GPU
-        # OpenCV image is (H, W, C) BGR
-        # We need (1, C, H, W) RGB for RF-DETR usually, but let's check detector.py
-        # detector.py handles BGR->RGB conversion if input is numpy, but if tensor it expects (3, H, W)
-        # So we should do BGR->RGB here or let detector handle it?
-        # detector.py: "if frame.shape[0] != 3 ... frame = frame.permute(2, 0, 1)"
-        # detector.py: "if frame.dtype == torch.uint8: frame = frame.float() / 255.0"
-        
-        # Efficient path:
-        # 1. To Tensor (on CPU first as from_numpy is zero-copy usually)
         tensor = torch.from_numpy(image)
         # 2. Move to GPU
         tensor = tensor.to(device, non_blocking=True)
@@ -324,9 +313,9 @@ def main():
     zoom_target_lp = 1.0
     roi_active = False
     roi_stable_frames = 0
-    roi_ready_frames = 40  # Increased from 25 (~1.3s) for more stable activation
+    roi_ready_frames = 40 
     roi_fail_count = 0
-    roi_fail_max = 150  # Increased from 120 (5 seconds) to prevent premature deactivation
+    roi_fail_max = 150  
     roi_last_valid_pos = None
     bloom_counter = 0
     bloom_max = bloom_duration_frames if bloom_enabled else 0
@@ -428,13 +417,21 @@ def main():
                     detection_viable = False
                     if ball_detection is not None:
                         bx, by, bw, bh, bconf = ball_detection
-                        # Check for erratic movement
+                        # Check for erratic movement (Teleportation Guard)
                         if roi_last_valid_pos is not None:
                             dx = bx - roi_last_valid_pos[0]
                             dy = by - roi_last_valid_pos[1]
                             jump_dist = math.hypot(dx, dy)
-                            # Viable if movement is reasonable (not teleporting)
-                            detection_viable = jump_dist < diag * 0.3
+                            
+                            # Teleportation Guard: Reject large jumps unless confidence is super high
+                            # 300px is about 1/6th of the screen width at 1080p
+                            if jump_dist > 300.0 and bconf < 0.80:
+                                print(f"🛡 Teleportation Guard: Rejected jump of {jump_dist:.1f}px with conf {bconf:.2f}")
+                                detection_viable = False
+                            elif jump_dist < diag * 0.3:
+                                detection_viable = True
+                            else:
+                                detection_viable = False
                         else:
                             detection_viable = True
                         
@@ -449,6 +446,7 @@ def main():
                     # Only increment fail count if no viable detection
                     if not detection_viable:
                         roi_fail_count += 1
+                        ball_detection = None # Ensure we don't pass bad detection to tracker
                     else:
                         roi_fail_count = 0
                     
@@ -458,33 +456,25 @@ def main():
                         roi_fail_count = 0
                         roi_stable_frames = 0
                         roi_last_valid_pos = None
-            
-            # Spatial filter: exclude stands/lights regions (top + sides)
-            # ONLY apply when ROI is NOT active AND zoom < 1.4
-            # When zoomed in or ROI active, we're already focused on playing field
             apply_spatial_filter = (not roi_active) and (current_zoom_level < 1.4)
             
             if apply_spatial_filter:
-                # TOP: Reject detections in upper 25% of frame (stands/lights)
-                # SIDES: Reject detections in outer 15% on left and right (side stands)
                 if ball_detection is not None:
                     bx, by, bw, bh, bconf = ball_detection
-                    # Exclude top region
+                    
                     if by < reader.height * 0.25:
                         ball_detection = None
-                    # Exclude left side region
+                    
                     elif bx < reader.width * 0.15:
                         ball_detection = None
-                    # Exclude right side region
+                    
                     elif bx > reader.width * 0.85:
                         ball_detection = None
                 
-                # Filter all_detections as well
                 if all_detections:
                     filtered_dets = []
                     for d in all_detections:
                         dx, dy = d[0], d[1]
-                        # Keep only detections in valid playing field area
                         if (dy >= reader.height * 0.25 and 
                             dx >= reader.width * 0.15 and 
                             dx <= reader.width * 0.85):
@@ -504,21 +494,16 @@ def main():
             elif track_result:
                 x, y, is_tracking = track_result
                 
-                # Check if we have real detection (not prediction)
                 det_ok = False
                 if ball_detection:
                     det_ok = True
                 
-                # Detect tracking/lost loops
                 if is_tracking != last_tracking_state:
                     tracking_state_changes.append(frame_count)
-                    # Keep only recent changes
                     tracking_state_changes = [f for f in tracking_state_changes if frame_count - f < loop_detection_window]
                     
-                    # If too many state changes = unstable loop
                     if len(tracking_state_changes) >= loop_threshold:
                         print(f"⚠ LOOP DETECTED - Resetting to center")
-                        # Reset to center with zoom out
                         center_x = reader.width // 2
                         center_y = reader.height // 2
                         virtual_camera.reset()
@@ -532,14 +517,12 @@ def main():
                         consecutive_det_frames = 0
                 last_tracking_state = is_tracking
                 
-                # Track consecutive detection frames
                 if det_ok and ball_detection:
                     consecutive_det_frames += 1
                 else:
                     consecutive_det_frames = 0
                 
                 if not is_tracking:
-                    # Freeze camera during search to avoid jitter from predictions
                     if roi_active:
                         print(f"⚠ ROI deactivated - back to full-frame detection")
                     roi_active = False
@@ -547,12 +530,11 @@ def main():
                     roi_stable_frames = 0
                     roi_last_valid_pos = None
                 else:
-                    # Tracker is confident - activate ROI after a few frames
                     roi_stable_frames += 1
                     if (not roi_active) and roi_stable_frames >= roi_ready_frames:
                         roi_active = True
                         roi_fail_count = 0
-                        roi_last_valid_pos = None  # Reset on ROI activation
+                        roi_last_valid_pos = None
                         print(f"✓ ROI activated - now detecting only in zoom region for performance")
                     if is_tracking:
                         last_reliable_position = (x, y)
@@ -570,7 +552,6 @@ def main():
                         if abs(dy) > lost_pan_limit:
                             y = current_cy + math.copysign(lost_pan_limit, dy)
                 
-                # Get tracker state (must be outside the if/else block)
                 state = tracker.get_state()
                 vmag = state['velocity_magnitude'] if state else 0.0
                 kalman_ok = state['kalman_stable'] if state else True
@@ -579,7 +560,6 @@ def main():
                 if anchor is None:
                     anchor = (x, y)
                 use_x, use_y = x, y
-                # Update last_det for visual overlay
                 if ball_detection:
                     last_det = (ball_detection[0], ball_detection[1])
                     recent_dets.append((ball_detection[0], ball_detection[1]))
@@ -619,10 +599,7 @@ def main():
                             det_zoom = 1.55
                         else:
                             det_zoom = 1.35
-                    # Gradual zoom out if detections are very short (<3 frames)
-                    # Keep ROI active but reduce zoom to find ball easier
                     if roi_active and consecutive_det_frames < 3:
-                        # Gradual zoom out while maintaining ROI
                         target_zoom_before_loss = max(1.0, target_zoom_before_loss * 0.97)
                         target_zoom_level = target_zoom_before_loss
                         zoom_lock_count = max(zoom_lock_count - 2, 0)  # Faster unlock
@@ -652,7 +629,6 @@ def main():
                         target_zoom_level = hold_zoom_level
                     else:
                         target_zoom_level = 1.0
-            # Removed LOST/SEARCHING state - system stays in PREDICTING/TRACKING only
             
             dz = target_zoom_level - zoom_target_lp
             az_t = 0.28 if abs(dz) > 0.25 else 0.18
@@ -674,7 +650,6 @@ def main():
             else:
                 zoom_cx = (x1 + x2) // 2
                 zoom_cy = (y1 + y2) // 2
-            # Clamp zoom center to safe margins to avoid edge jitter/dark areas
             safe_margin = max(8, int(diag * 0.02))
             if zoom_cx < safe_margin:
                 zoom_cx = safe_margin
@@ -733,28 +708,21 @@ def main():
             
             x1 = int(x1); y1 = int(y1); x2 = int(x2); y2 = int(y2)
             
-            # CRITICAL: Heavy smoothing on crop coordinates to eliminate jitter
             if prev_crop is not None:
                 pcx1, pcy1, pcx2, pcy2 = prev_crop
-                # Exponential smoothing - EXTRA heavy on Y axis when predicting
-                # When predicting (det_ok=False), nearly freeze vertical movement
                 if det_ok:
-                    # Has real detection - moderate smoothing
                     alpha_x = 0.12
                     alpha_y = 0.10
                 else:
-                    # Predicting - MUCH heavier smoothing, especially vertical
                     alpha_x = 0.08
-                    alpha_y = 0.03  # 97% keep previous Y position - nearly frozen
+                    alpha_y = 0.03
                 
                 x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
                 y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
                 x2 = int(pcx2 * (1.0 - alpha_x) + x2 * alpha_x)
                 y2 = int(pcy2 * (1.0 - alpha_y) + y2 * alpha_y)
                 
-                # Additional step limiter as backup
                 step_lim_x = int(max_crop_step_base * (1.0 + max(0.0, current_zoom_level - 1.0) * 0.8))
-                # Y axis - MUCH stricter limit when predicting to prevent vertical drift
                 step_lim_y = int(step_lim_x * 0.5) if not det_ok else step_lim_x
                 
                 if abs(x1 - pcx1) > step_lim_x:
@@ -802,8 +770,6 @@ def main():
                     cv2.putText(cropped, f"Ball: {conf:.2f}",
                                (bbox_x - bbox_w//2, bbox_y - bbox_h//2 - 10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            # Removed SEARCHING text - system never enters LOST state
-
             if (not track_result) and ball_detection:
                 bx, by, bw, bh, conf = ball_detection
                 bbox_x = int(bx - x1)

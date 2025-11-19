@@ -255,7 +255,9 @@ class BallDetector:
             width = x2 - x1
             height = y2 - y1
             
-            calibrated_conf = self._calibrate_confidence(conf, width, height)
+            calibrated_conf = self._calibrate_confidence(conf, width, height)          
+            if calibrated_conf < self.confidence_threshold:
+                continue
             
             detections.append((
                 x_center,
