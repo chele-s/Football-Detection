@@ -29,7 +29,7 @@ class HLSStreamer:
     def start(self):
         if self.running:
             return
-            encoders = [
+        encoders = [
             ('h264_nvenc', ['-preset', 'p1', '-tune', 'zerolatency']),
             ('libx264', ['-preset', 'ultrafast', '-tune', 'zerolatency'])
         ]
