@@ -78,14 +78,18 @@ class HLSStreamer:
                     stderr=subprocess.PIPE
                 )
                 
-                try:
-                    outs, errs = self.process.communicate(timeout=0.5)
-                    if self.process.returncode != 0:
-                        raise Exception(f"Encoder {encoder} failed: {errs}")
-                except subprocess.TimeoutExpired:
-                    self.running = True
-                    logger.info(f"HLS Streamer started using {encoder}. Output: {self.output_dir}")
-                    return
+                # Give it a moment to fail if arguments are wrong
+                time.sleep(0.5)
+                
+                if self.process.poll() is not None:
+                    # Process exited immediately - get error
+                    _, errs = self.process.communicate()
+                    raise Exception(f"Encoder {encoder} failed: {errs}")
+                
+                # If we get here, the process is still running (waiting for input)
+                self.running = True
+                logger.info(f"HLS Streamer started using {encoder}. Output: {self.output_dir}")
+                return
                     
             except Exception as e:
                 logger.warning(f"Failed to start with {encoder}: {e}")
