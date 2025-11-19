@@ -1,10 +1,22 @@
-#!/usr/bin/env python3
 import cv2
 import numpy as np
 import time
 import torch
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import math
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        RotatingFileHandler('app.log', maxBytes=10*1024*1024, backupCount=5),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 try:
     from app.Inference import BallDetector
@@ -135,23 +147,23 @@ class SmoothZoom:
         return self.z
 
 def main():
-    print("="*60)
-    print("🎥 MJPEG Stream Server - Football Detection")
-    print("="*60)
+    logger.info("="*60)
+    logger.info("🎥 MJPEG Stream Server - Football Detection")
+    logger.info("="*60)
     
     # Load configs
-    print("\n[1/5] Loading configurations...")
+    logger.info("\n[1/5] Loading configurations...")
     model_config = load_config('configs/model_config.yml')
     stream_config = load_config('configs/stream_config.yml')
     config = merge_configs(model_config, stream_config)
     
     # Initialize detector (auto-detect model type)
-    print("[2/5] Loading RF-DETR model...")
+    logger.info("[2/5] Loading RF-DETR model...")
     model_path = config['model']['path']
     
     if model_path and model_path.endswith('.onnx'):
         from app.inference.detector_onnx import BallDetectorONNX
-        print("    Using ONNX Runtime backend")
+        logger.info("    Using ONNX Runtime backend")
         detector = BallDetectorONNX(
             onnx_path=model_path,
             confidence_threshold=config['model']['confidence'],
@@ -159,14 +171,14 @@ def main():
         )
     elif model_path and model_path.endswith('.engine'):
         from app.inference.detector_tensorrt import BallDetectorTensorRT
-        print("    Using TensorRT backend")
+        logger.info("    Using TensorRT backend")
         detector = BallDetectorTensorRT(
             engine_path=model_path,
             confidence_threshold=config['model']['confidence'],
             imgsz=config['model'].get('imgsz', 640)
         )
     else:
-        print("    Using PyTorch backend")
+        logger.info("    Using PyTorch backend")
         detector = BallDetector(
             model_path=model_path,
             confidence_threshold=config['model']['confidence'],
@@ -179,7 +191,7 @@ def main():
         )
     
     # Initialize tracker with optimized parameters for ball tracking
-    print("[3/5] Initializing ball tracker...")
+    logger.info("[3/5] Initializing ball tracker...")
     tracking_config = config.get('tracking', {})
     tracker = BallTracker(
         max_lost_frames=tracking_config.get('max_lost_frames', 10),
@@ -194,12 +206,12 @@ def main():
     
     # Start MJPEG server
     mjpeg_port = config.get('stream', {}).get('mjpeg_port', 8554)
-    print(f"[4/5] Starting MJPEG server on port {mjpeg_port}...")
+    logger.info(f"[4/5] Starting MJPEG server on port {mjpeg_port}...")
     mjpeg_server = MJPEGServer(port=mjpeg_port)
     mjpeg_server.start()
-    print("✅ MJPEG server started!")
-    print("📺 Stream URL: http://localhost:8554/stream.mjpg")
-    print("💡 En Colab, usa ngrok para exponer el puerto 8554")
+    logger.info("✅ MJPEG server started!")
+    logger.info("📺 Stream URL: http://localhost:8554/stream.mjpg")
+    logger.info("💡 En Colab, usa ngrok para exponer el puerto 8554")
     
     # Open video
     output_config = config.get('output', {})
@@ -209,12 +221,28 @@ def main():
     processing_config = config.get('processing', {})
     processing_width = int(processing_config.get('detection_width', 1920))
     processing_height = int(processing_config.get('detection_height', 1080))
-    print(f"   → Detection resolution cap: {processing_width}x{processing_height}")
+    logger.info(f"   → Detection resolution cap: {processing_width}x{processing_height}")
 
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
-    print(f"\n[5/5] Opening video: {video_path}")
-    reader = VideoReader(video_path)
-    print(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+    logger.info(f"\n[5/5] Opening video: {video_path}")
+    # Enable auto-reconnect for streams (assumed if http/rtsp/rtmp)
+    is_stream = video_path.startswith(('http', 'rtsp', 'rtmp'))
+    reader = VideoReader(video_path, reconnect=is_stream)
+    logger.info(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+    
+    # Re-initialize tracker with correct frame dimensions
+    tracker = BallTracker(
+        frame_width=reader.width,
+        frame_height=reader.height,
+        max_lost_frames=tracking_config.get('max_lost_frames', 10),
+        min_confidence=tracking_config.get('min_confidence', 0.45),
+        iou_threshold=tracking_config.get('iou_threshold', 0.10),
+        adaptive_noise=True,
+        allow_chaos_mode=tracking_config.get('allow_chaos_mode', False),
+        allow_jitter_mode=tracking_config.get('allow_jitter_mode', False),
+        detection_smoothing=tracking_config.get('detection_smoothing', 0.25)
+    )
+    logger.info(f"   → Tracker config: max_lost={tracker.max_lost_frames}, min_conf={tracker.min_confidence:.2f}, iou={tracker.iou_threshold:.2f}")
 
     # Initialize virtual camera
     # Base crop size for normal view - will zoom progressively when tracking
@@ -250,10 +278,10 @@ def main():
     
     ball_class_id = config['model'].get('ball_class_id', 0)
     
-    print("\n" + "="*60)
-    print("🚀 Starting processing loop...")
-    print("="*60)
-    print("Press Ctrl+C to stop\n")
+    logger.info("\n" + "="*60)
+    logger.info("🚀 Starting processing loop...")
+    logger.info("="*60)
+    logger.info("Press Ctrl+C to stop\n")
     
     frame_count = 0
     last_log_time = time.time()
@@ -332,9 +360,12 @@ def main():
             
             ret, frame = reader.read()
             if not ret or frame is None:
-                print("📹 Video ended, restarting...")
-                reader.release()
-                reader = VideoReader(video_path)
+                logger.warning("📹 Video ended or disconnected, restarting...")
+                # If VideoReader handles reconnect, this might just be end of file
+                # If it's a file, loop it. If it's a stream, VideoReader should have reconnected.
+                if not is_stream:
+                    reader.release()
+                    reader = VideoReader(video_path, reconnect=False)
                 continue
             follow_cx, follow_cy = None, None
             
@@ -424,9 +455,10 @@ def main():
                             jump_dist = math.hypot(dx, dy)
                             
                             # Teleportation Guard: Reject large jumps unless confidence is super high
-                            # 300px is about 1/6th of the screen width at 1080p
-                            if jump_dist > 300.0 and bconf < 0.80:
-                                print(f"🛡 Teleportation Guard: Rejected jump of {jump_dist:.1f}px with conf {bconf:.2f}")
+                            # 300px is about 15% of width
+                            jump_limit = reader.width * 0.15
+                            if jump_dist > jump_limit and bconf < 0.80:
+                                logger.warning(f"🛡 Teleportation Guard: Rejected jump of {jump_dist:.1f}px with conf {bconf:.2f}")
                                 detection_viable = False
                             elif jump_dist < diag * 0.3:
                                 detection_viable = True
@@ -451,7 +483,7 @@ def main():
                         roi_fail_count = 0
                     
                     if roi_fail_count >= roi_fail_max:
-                        print(f"⚠ ROI lost ball for {roi_fail_max} frames - switching to full-frame detection")
+                        logger.warning(f"⚠ ROI lost ball for {roi_fail_max} frames - switching to full-frame detection")
                         roi_active = False
                         roi_fail_count = 0
                         roi_stable_frames = 0
@@ -490,7 +522,7 @@ def main():
                 anchor = (x, y)
                 crop_coords = virtual_camera.update(x, y, time.time(), velocity_hint=tracker.get_velocity())
                 camera_initialized = True
-                print(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
+                logger.info(f"[CAMERA] Initialized at ball position: ({x:.1f}, {y:.1f})")
             elif track_result:
                 x, y, is_tracking = track_result
                 
@@ -503,7 +535,7 @@ def main():
                     tracking_state_changes = [f for f in tracking_state_changes if frame_count - f < loop_detection_window]
                     
                     if len(tracking_state_changes) >= loop_threshold:
-                        print(f"⚠ LOOP DETECTED - Resetting to center")
+                        logger.warning(f"⚠ LOOP DETECTED - Resetting to center")
                         center_x = reader.width // 2
                         center_y = reader.height // 2
                         virtual_camera.reset()
@@ -524,7 +556,7 @@ def main():
                 
                 if not is_tracking:
                     if roi_active:
-                        print(f"⚠ ROI deactivated - back to full-frame detection")
+                        logger.info(f"⚠ ROI deactivated - back to full-frame detection")
                     roi_active = False
                     roi_fail_count = 0
                     roi_stable_frames = 0
@@ -535,7 +567,7 @@ def main():
                         roi_active = True
                         roi_fail_count = 0
                         roi_last_valid_pos = None
-                        print(f"✓ ROI activated - now detecting only in zoom region for performance")
+                        logger.info(f"✓ ROI activated - now detecting only in zoom region for performance")
                     if is_tracking:
                         last_reliable_position = (x, y)
                     else:

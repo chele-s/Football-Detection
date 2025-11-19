@@ -1,17 +1,25 @@
 import cv2
 import numpy as np
 import subprocess
+import time
+import logging
 from typing import Optional, Tuple
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
 class VideoReader:
-    def __init__(self, source: str):
+    def __init__(self, source: str, reconnect: bool = False):
         self.source = source
+        self.reconnect = reconnect
         self.cap = cv2.VideoCapture(source)
         
         if not self.cap.isOpened():
-            raise ValueError(f"No se pudo abrir: {source}")
+            if self.reconnect:
+                logger.warning(f"Could not open {source}, entering reconnection loop...")
+                self._reconnect()
+            else:
+                raise ValueError(f"No se pudo abrir: {source}")
         
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -19,9 +27,34 @@ class VideoReader:
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         self.frame_count = 0
+
+    def _reconnect(self):
+        while True:
+            try:
+                logger.info(f"Attempting to reconnect to {self.source}...")
+                self.cap.release()
+                self.cap = cv2.VideoCapture(self.source)
+                if self.cap.isOpened():
+                    logger.info("Reconnection successful!")
+                    # Update properties in case they changed
+                    self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+                    self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    return
+            except Exception as e:
+                logger.error(f"Reconnection failed: {e}")
+            
+            logger.info("Waiting 5 seconds before next attempt...")
+            time.sleep(5)
     
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         ret, frame = self.cap.read()
+        
+        if not ret and self.reconnect:
+            logger.warning("Stream disconnected or empty frame, attempting to reconnect...")
+            self._reconnect()
+            ret, frame = self.cap.read()
+            
         if ret:
             self.frame_count += 1
         return ret, frame
