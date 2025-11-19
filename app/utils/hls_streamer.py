@@ -30,8 +30,12 @@ class HLSStreamer:
         if self.running:
             return
         encoders = [
-            ('h264_nvenc', ['-preset', 'p1', '-tune', 'ull', '-profile:v', 'main']),
-            ('libx264', ['-preset', 'ultrafast', '-tune', 'zerolatency', '-profile:v', 'main'])
+            # Try NVENC with basic low-latency settings
+            ('h264_nvenc', ['-preset', 'p1', '-delay', '0']),
+            # Try CPU with zero latency tuning
+            ('libx264', ['-preset', 'ultrafast', '-tune', 'zerolatency']),
+            # Fallback: CPU with minimal options
+            ('libx264', ['-preset', 'ultrafast'])
         ]
         
         for encoder, encoder_opts in encoders:
