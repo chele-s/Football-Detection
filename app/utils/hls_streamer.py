@@ -51,8 +51,6 @@ class HLSStreamer:
                 '-c:v', encoder,
                 '-pix_fmt', 'yuv420p'
             ] + encoder_opts + [
-                '-g', str(self.fps * 2),
-                '-sc_threshold', '0',
                 '-f', 'hls',
                 '-hls_time', '2',
                 '-hls_list_size', '5',
@@ -61,8 +59,16 @@ class HLSStreamer:
                 self.playlist_path
             ]
             
+            # Add GOP size and sc_threshold only for non-fallback options if needed, 
+            # but for safety let's omit them in the fallback or if they cause issues.
+            # We'll add them only if not in the minimal fallback.
+            if 'ultrafast' not in encoder_opts or len(encoder_opts) > 2:
+                 cmd.insert(13, str(self.fps * 2))
+                 cmd.insert(13, '-g')
+            
             try:
                 logger.info(f"Attempting to start HLS streamer with {encoder}...")
+                logger.info(f"Command: {' '.join(cmd)}")
                 self.process = subprocess.Popen(
                     cmd,
                     stdin=subprocess.PIPE,
