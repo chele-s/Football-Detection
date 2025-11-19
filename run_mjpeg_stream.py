@@ -225,10 +225,18 @@ def main():
 
     video_path = config.get('stream', {}).get('input_url', '/content/football.mp4')
     logger.info(f"\n[5/5] Opening video: {video_path}")
-    # Enable auto-reconnect for streams (assumed if http/rtsp/rtmp)
-    is_stream = video_path.startswith(('http', 'rtsp', 'rtmp'))
-    reader = VideoReader(video_path, reconnect=is_stream)
-    logger.info(f"✅ Video opened: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+    
+    use_ffmpeg = True
+    try:
+        reader = FFmpegVideoLoader(video_path)
+        logger.info(f"✅ Video opened with FFmpeg Pipe (CUDA): {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+    except Exception as e:
+        logger.warning(f"⚠ FFmpeg Loader failed, falling back to OpenCV...")
+        # Enable auto-reconnect for streams (assumed if http/rtsp/rtmp)
+        is_stream = video_path.startswith(('http', 'rtsp', 'rtmp'))
+        reader = VideoReader(video_path, reconnect=is_stream)
+        use_ffmpeg = False
+        logger.info(f"✅ Video opened with OpenCV: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
     
     # Re-initialize tracker with correct frame dimensions
     tracker = BallTracker(
@@ -360,12 +368,16 @@ def main():
             
             ret, frame = reader.read()
             if not ret or frame is None:
-                logger.warning("📹 Video ended or disconnected, restarting...")
-                # If VideoReader handles reconnect, this might just be end of file
-                # If it's a file, loop it. If it's a stream, VideoReader should have reconnected.
-                if not is_stream:
-                    reader.release()
-                    reader = VideoReader(video_path, reconnect=False)
+                logger.warning("📹 Video ended, restarting...")
+                reader.release()
+                if use_ffmpeg:
+                    try:
+                        reader = FFmpegVideoLoader(video_path)
+                    except:
+                        reader = VideoReader(video_path)
+                        use_ffmpeg = False
+                else:
+                    reader = VideoReader(video_path)
                 continue
             follow_cx, follow_cy = None, None
             
