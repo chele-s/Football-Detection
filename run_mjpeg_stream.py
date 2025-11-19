@@ -194,8 +194,8 @@ def main():
     tracking_config = config.get('tracking', {})
     tracker = BallTracker(
         max_lost_frames=tracking_config.get('max_lost_frames', 10),
-        min_confidence=tracking_config.get('min_confidence', 0.10),
-        iou_threshold=tracking_config.get('iou_threshold', 0.20),
+        min_confidence=tracking_config.get('min_confidence', 0.45),
+        iou_threshold=tracking_config.get('iou_threshold', 0.10),
         adaptive_noise=True,
         allow_chaos_mode=tracking_config.get('allow_chaos_mode', False),
         allow_jitter_mode=tracking_config.get('allow_jitter_mode', False),
@@ -244,8 +244,8 @@ def main():
         anticipation_factor=0.35,
         zoom_padding=camera_config.get('zoom_padding', 1.2),
         smoothing_freq=camera_config.get('smoothing_freq', 30.0),
-        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 2.5),
-        smoothing_beta=camera_config.get('smoothing_beta', 0.001),
+        smoothing_min_cutoff=camera_config.get('smoothing_min_cutoff', 0.5),
+        smoothing_beta=camera_config.get('smoothing_beta', 0.05),
         use_pid=True,
         prediction_steps=5
     )

@@ -338,16 +338,18 @@ class BallTracker:
                 vx_est, vy_est = self.get_velocity()
                 vmag = float(np.sqrt(vx_est**2 + vy_est**2))
                 
-                base_distance = 180.0
-                velocity_factor = min(vmag * 2.5, 800.0)
-                lost_relaxation = min(self.lost_frames * 150.0, 600.0)
+                # Stricter gating to prevent jumping to false positives
+                base_distance = 100.0  # Reduced from 180.0
+                velocity_factor = min(vmag * 2.0, 600.0)
+                lost_relaxation = min(self.lost_frames * 100.0, 400.0)
                 erratic_penalty = 120.0 if detector_erratic else 0.0
                 allowed_distance = base_distance + velocity_factor + lost_relaxation - erratic_penalty
                 
                 dist_curr = float(np.sqrt((x_center - float(self.kalman.x[0,0]))**2 + (y_center - float(self.kalman.x[1,0]))**2))
                 
                 if dist_curr > allowed_distance:
-                    if confidence > 0.7:
+                    # Require VERY high confidence to override distance gate
+                    if confidence > 0.85:
                         logger.info(f"High confidence detection ({confidence:.2f}) overrides distance gate ({dist_curr:.1f} > {allowed_distance:.1f})")
                     else:
                         logger.debug(f"Distance gate: {dist_curr:.1f} > {allowed_distance:.1f}")
