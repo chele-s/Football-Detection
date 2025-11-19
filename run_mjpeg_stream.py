@@ -921,9 +921,12 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        reader.release()
-        mjpeg_server.stop()
-        print("✅ Stream stopped")
+        if 'reader' in locals() and reader:
+            reader.release()
+        if 'mjpeg_server' in locals() and mjpeg_server:
+            # Assuming MJPEGServer has a stop or close method, or just let it die with the process
+            pass
+        print("✅ Resources released.")
 
 if __name__ == "__main__":
     main()

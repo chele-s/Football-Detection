@@ -430,11 +430,17 @@ class BallTracker:
                                        (recent_positions[i+1][1] - recent_positions[i][1])**2)
                                for i in range(len(recent_positions)-1)]
                     avg_movement = np.mean(movements)
+                    movement_ratio = avg_movement / self.frame_width                    
+                    if movement_ratio < 0.002:
+                        scale_factor = 0.95
+                    elif movement_ratio > 0.015:
+                        scale_factor = 1.05
+                    else:
+                        scale_factor = 1.0
+                        
+                    self.kalman.Q *= scale_factor
                     
-                    if avg_movement < (self.frame_width * 0.0026): # < 5px
-                        self.kalman.Q *= 0.98
-                    elif avg_movement > (self.frame_width * 0.026): # > 50px
-                        self.kalman.Q *= 1.02
+                    np.fill_diagonal(self.kalman.Q, np.clip(np.diag(self.kalman.Q), 1e-4, 1e-1))
                 
                 vx, vy = self.kalman.get_velocity()
                 self.velocity_history.append((vx, vy))
