@@ -214,16 +214,7 @@ def main():
     mjpeg_server = MJPEGServer(port=mjpeg_port, hls_dir=hls_output_dir)
     mjpeg_server.start()
     
-    # Initialize HLS Streamer
-    target_output_width = int(config.get('output', {}).get('width', 1920))
-    target_output_height = int(config.get('output', {}).get('height', 1080))
-    
-    # Use source FPS if available, otherwise default to 30
-    source_fps = getattr(reader, 'fps', 30.0)
-    logger.info(f"Source FPS: {source_fps:.2f}")
-    
-    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=target_output_width, height=target_output_height, fps=int(source_fps))
-    hls_streamer.start()
+
     
     logger.info("✅ Stream Server started!")
     logger.info(f"📺 MJPEG Stream: http://localhost:{mjpeg_port}/stream.mjpg")
@@ -254,6 +245,17 @@ def main():
         reader = VideoReader(video_path, reconnect=is_stream)
         use_ffmpeg = False
         logger.info(f"✅ Video opened with OpenCV: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
+
+    # Initialize HLS Streamer
+    target_output_width = int(config.get('output', {}).get('width', 1920))
+    target_output_height = int(config.get('output', {}).get('height', 1080))
+    
+    # Use source FPS if available, otherwise default to 30
+    source_fps = getattr(reader, 'fps', 30.0)
+    logger.info(f"Source FPS: {source_fps:.2f}")
+    
+    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=target_output_width, height=target_output_height, fps=int(source_fps))
+    hls_streamer.start()
     
     # Re-initialize tracker with correct frame dimensions
     tracker = BallTracker(
