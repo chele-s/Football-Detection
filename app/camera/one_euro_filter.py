@@ -13,10 +13,6 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 class LowPassFilter:
-    """
-    Filtro paso bajo exponencial simple.
-    x_i = alpha * x_i + (1 - alpha) * x_{i-1}
-    """
     __slots__ = ('alpha', 'y', 's', 'initialized')
 
     def __init__(self, alpha: float, init_value: float = 0.0):
@@ -53,16 +49,12 @@ class LowPassFilter:
 
 
 class OneEuroFilter:
-    """
-    Filtro One-Euro optimizado para tracking en tiempo real.
-    Minimiza el jitter (temblores) en bajas velocidades y el lag en altas velocidades.
-    """
     def __init__(
         self,
-        freq: float = 30.0,     # Frecuencia estimada de entrada
-        min_cutoff: float = 1.0, # Frecuencia de corte mínima (para estados estables)
-        beta: float = 0.007,     # Coeficiente de velocidad (sensibilidad al movimiento)
-        d_cutoff: float = 1.0    # Frecuencia de corte para la derivada
+        freq: float = 30.0,
+        min_cutoff: float = 1.0,
+        beta: float = 0.007,
+        d_cutoff: float = 1.0
     ):
         self.freq = float(freq)
         self.min_cutoff = float(min_cutoff)
@@ -84,14 +76,12 @@ class OneEuroFilter:
         return 1.0 / (1.0 + tau / te)
 
     def __call__(self, x: float, y: float, timestamp: Optional[float] = None) -> Tuple[float, float]:
-        # Actualizar frecuencia si tenemos timestamps
         if timestamp is not None and self.last_time is not None:
             dt = timestamp - self.last_time
             if dt > 0:
                 self.freq = 1.0 / dt
         self.last_time = timestamp
 
-        # Estimar derivada (velocidad)
         if self.x_filter.initialized:
             dx_raw = (x - self.x_filter.y) * self.freq
             dy_raw = (y - self.y_filter.y) * self.freq
@@ -99,27 +89,18 @@ class OneEuroFilter:
             dx_raw = 0.0
             dy_raw = 0.0
 
-        # Filtrar derivada
         edx = self.dx_filter.filter_with_alpha(dx_raw, self._alpha(self.d_cutoff))
         edy = self.dy_filter.filter_with_alpha(dy_raw, self._alpha(self.d_cutoff))
 
-        # Calcular cutoff adaptativo basado en la velocidad
-        # cutoff = min_cutoff + beta * |edx|
-        # A mayor velocidad, mayor cutoff (menos filtrado, menos lag)
-        # A menor velocidad, menor cutoff (más filtrado, menos jitter)
         cutoff_x = self.min_cutoff + self.beta * abs(edx)
         cutoff_y = self.min_cutoff + self.beta * abs(edy)
 
-        # Filtrar señal principal
         x_filtered = self.x_filter.filter_with_alpha(x, self._alpha(cutoff_x))
         y_filtered = self.y_filter.filter_with_alpha(y, self._alpha(cutoff_y))
 
         return x_filtered, y_filtered
 
     def set_smoothing_level(self, level: float):
-        """Ajusta dinámicamente el nivel de suavizado (min_cutoff)."""
-        # level bajo (0.1) = mucho suavizado (lento)
-        # level alto (5.0) = poco suavizado (rápido)
         self.min_cutoff = max(0.01, float(level))
 
     def reset(self):
