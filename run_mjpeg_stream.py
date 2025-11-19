@@ -247,14 +247,24 @@ def main():
         logger.info(f"✅ Video opened with OpenCV: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
 
     # Initialize HLS Streamer
-    target_output_width = int(config.get('output', {}).get('width', 1920))
-    target_output_height = int(config.get('output', {}).get('height', 1080))
+    # Cap HLS resolution to 1920 width to ensure compatibility and performance
+    # The source video is 4608x1728 which is too large for standard H.264 levels and NVENC
+    hls_width = int(config.get('output', {}).get('width', 1920))
+    hls_height = int(config.get('output', {}).get('height', 1080))
     
+    if hls_width > 1920:
+        aspect_ratio = hls_height / hls_width
+        hls_width = 1920
+        hls_height = int(hls_width * aspect_ratio)
+        # Ensure even dimensions for video encoding
+        hls_height = hls_height - (hls_height % 2)
+        
     # Use source FPS if available, otherwise default to 30
     source_fps = getattr(reader, 'fps', 30.0)
     logger.info(f"Source FPS: {source_fps:.2f}")
+    logger.info(f"HLS Resolution: {hls_width}x{hls_height}")
     
-    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=target_output_width, height=target_output_height, fps=int(source_fps))
+    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=hls_width, height=hls_height, fps=int(source_fps))
     hls_streamer.start()
     
     # Re-initialize tracker with correct frame dimensions
