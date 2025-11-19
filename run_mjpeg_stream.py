@@ -217,7 +217,12 @@ def main():
     # Initialize HLS Streamer
     target_output_width = int(config.get('output', {}).get('width', 1920))
     target_output_height = int(config.get('output', {}).get('height', 1080))
-    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=target_output_width, height=target_output_height, fps=30)
+    
+    # Use source FPS if available, otherwise default to 30
+    source_fps = getattr(reader, 'fps', 30.0)
+    logger.info(f"Source FPS: {source_fps:.2f}")
+    
+    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=target_output_width, height=target_output_height, fps=int(source_fps))
     hls_streamer.start()
     
     logger.info("✅ Stream Server started!")
@@ -912,6 +917,13 @@ def main():
             hls_streamer.update_frame(display_frame)
             
             frame_count += 1
+            
+            # Frame Rate Limiting to match source FPS
+            # This prevents the "fast forward" effect when processing is faster than video
+            process_time = time.time() - loop_start
+            target_frame_time = 1.0 / source_fps
+            if process_time < target_frame_time:
+                time.sleep(target_frame_time - process_time)
             
             if frame_count % 30 == 0:
                 current_time = time.time()
