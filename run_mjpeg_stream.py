@@ -249,23 +249,23 @@ def main():
     # Initialize HLS Streamer
     # Cap HLS resolution to 1920 width to ensure compatibility and performance
     # The source video is 4608x1728 which is too large for standard H.264 levels and NVENC
-    hls_width = int(config.get('output', {}).get('width', 1920))
-    hls_height = int(config.get('output', {}).get('height', 1080))
+    # hls_width = int(config.get('output', {}).get('width', 1920))
+    # hls_height = int(config.get('output', {}).get('height', 1080))
     
-    if hls_width > 1920:
-        aspect_ratio = hls_height / hls_width
-        hls_width = 1920
-        hls_height = int(hls_width * aspect_ratio)
-        # Ensure even dimensions for video encoding
-        hls_height = hls_height - (hls_height % 2)
+    # if hls_width > 1920:
+    #     aspect_ratio = hls_height / hls_width
+    #     hls_width = 1920
+    #     hls_height = int(hls_width * aspect_ratio)
+    #     # Ensure even dimensions for video encoding
+    #     hls_height = hls_height - (hls_height % 2)
         
-    # Use source FPS if available, otherwise default to 30
-    source_fps = getattr(reader, 'fps', 30.0)
-    logger.info(f"Source FPS: {source_fps:.2f}")
-    logger.info(f"HLS Resolution: {hls_width}x{hls_height}")
+    # # Use source FPS if available, otherwise default to 30
+    # source_fps = getattr(reader, 'fps', 30.0)
+    # logger.info(f"Source FPS: {source_fps:.2f}")
+    # logger.info(f"HLS Resolution: {hls_width}x{hls_height}")
     
-    hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=hls_width, height=hls_height, fps=int(source_fps))
-    hls_streamer.start()
+    # hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=hls_width, height=hls_height, fps=int(source_fps))
+    # hls_streamer.start()
     
     # Re-initialize tracker with correct frame dimensions
     tracker = BallTracker(
@@ -919,20 +919,6 @@ def main():
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
             resize_interp = cv2.INTER_CUBIC if (target_output_width > cropped.shape[1]) else cv2.INTER_LINEAR
-            display_frame = cv2.resize(
-                cropped,
-                (target_output_width, target_output_height),
-                interpolation=resize_interp
-            )
-            
-            mjpeg_server.update_frame(display_frame)
-            hls_streamer.update_frame(display_frame)
-            
-            frame_count += 1
-            
-            # Frame Rate Limiting to match source FPS
-            # This prevents the "fast forward" effect when processing is faster than video
-            process_time = time.time() - loop_start
             target_frame_time = 1.0 / source_fps
             if process_time < target_frame_time:
                 time.sleep(target_frame_time - process_time)
