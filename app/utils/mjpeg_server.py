@@ -39,7 +39,21 @@ class MJPEGServer:
                 pass
             
             def do_GET(self):
-                if self.path == '/stream.mjpg':
+                if self.path == '/':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    try:
+                        # Serve the player.html file
+                        player_path = os.path.join(os.path.dirname(__file__), 'player.html')
+                        if os.path.exists(player_path):
+                            with open(player_path, 'rb') as f:
+                                self.wfile.write(f.read())
+                        else:
+                            self.wfile.write(b"<h1>Player not found</h1>")
+                    except Exception as e:
+                        logger.error(f"Error serving player: {e}")
+                elif self.path == '/stream.mjpg':
                     self.send_response(200)
                     self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
                     self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')

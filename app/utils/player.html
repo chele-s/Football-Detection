@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Football Detection Stream</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1280px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 { margin-bottom: 20px; }
+        #video-container {
+            position: relative;
+            width: 100%;
+            padding-top: 56.25%; /* 16:9 Aspect Ratio */
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .status {
+            margin-top: 10px;
+            color: #888;
+            font-size: 0.9em;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        button:hover { background: #1976D2; }
+        button.secondary { background: #555; }
+        button.secondary:hover { background: #666; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Football Detection Live</h1>
+        
+        <div id="video-container">
+            <video id="video" controls autoplay muted></video>
+        </div>
+        
+        <div class="status" id="status">Connecting to stream...</div>
+        
+        <div class="controls">
+            <button onclick="window.location.reload()">Reload Player</button>
+            <button class="secondary" onclick="window.open('/stream.mjpg', '_blank')">Open MJPEG (Fallback)</button>
+        </div>
+    </div>
+
+    <script>
+        var video = document.getElementById('video');
+        var statusDiv = document.getElementById('status');
+        var streamUrl = '/hls/stream.m3u8';
+
+        if (Hls.isSupported()) {
+            var hls = new Hls({
+                debug: false,
+                enableWorker: true,
+                lowLatencyMode: true,
+                backBufferLength: 90
+            });
+            
+            hls.loadSource(streamUrl);
+            hls.attachMedia(video);
+            
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                statusDiv.textContent = "Live (HLS)";
+                video.play().catch(e => console.log("Autoplay prevented:", e));
+            });
+            
+            hls.on(Hls.Events.ERROR, function(event, data) {
+                if (data.fatal) {
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            statusDiv.textContent = "Network error, trying to recover...";
+                            hls.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            statusDiv.textContent = "Media error, trying to recover...";
+                            hls.recoverMediaError();
+                            break;
+                        default:
+                            statusDiv.textContent = "Fatal error: " + data.details;
+                            hls.destroy();
+                            break;
+                    }
+                }
+            });
+        }
+        else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Native HLS support (Safari)
+            video.src = streamUrl;
+            video.addEventListener('loadedmetadata', function() {
+                statusDiv.textContent = "Live (Native HLS)";
+                video.play();
+            });
+        }
+        else {
+            statusDiv.textContent = "Your browser does not support HLS.";
+        }
+    </script>
+</body>
+</html>
