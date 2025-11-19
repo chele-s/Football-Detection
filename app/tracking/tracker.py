@@ -186,6 +186,12 @@ class BallTracker:
         self.jitter_mode = False
         self.jitter_cooldown = 0
         
+        # Occlusion Handling & False Positive Rejection
+        self.coast_mode = False
+        self.coast_frames = 0
+        self.max_coast_frames = 15  # Coast for up to 0.5s (at 30fps)
+        self.vertical_jump_guard = True  # Reject sudden upward jumps (often heads/lights)
+        
         logger.info(f"BallTracker initialized: size={frame_width}x{frame_height}, max_lost={max_lost_frames}, min_conf={min_confidence}")
     
     def update(
@@ -316,6 +322,30 @@ class BallTracker:
                 if dist_to_pred > lock_threshold:
                     logger.debug(f"Stability lock active: ignoring detection {dist_to_pred:.1f}px away")
                     detection = None
+            
+            # Strict Re-acquisition: If we lost the ball for a while, don't snap to the first thing we see
+            # unless it's very confident or we have a sequence
+            if detection is not None and self.lost_frames > 5:
+                if confidence < 0.75 and self.consecutive_detections < 1:
+                    logger.debug(f"Strict re-acquisition: Rejecting low confidence candidate {confidence:.2f}")
+                    detection = None
+            
+            # Vertical Jump Guard: Reject sudden large upward movements
+            
+            # Vertical Jump Guard: Reject sudden large upward movements
+            # This is common when a player passes in front and the model detects their head/shoulder
+            if detection is not None and self.last_accepted_position is not None:
+                last_y = self.last_accepted_position[1]
+                # If new y is significantly higher (smaller value) than last y
+                # 150px is ~7.8% of 1080p height
+                vertical_jump = last_y - y_center
+                vertical_limit = self.frame_height * 0.14  # ~150px
+                
+                if vertical_jump > vertical_limit and not self.chaos_mode:
+                    # Only reject if we don't have super high confidence
+                    if confidence < 0.85:
+                        logger.warning(f"Vertical Jump Guard: Rejected upward jump of {vertical_jump:.1f}px")
+                        detection = None
             
             if detection is not None and confidence < self.min_confidence:
                 if is_stable:
@@ -454,6 +484,10 @@ class BallTracker:
                 self.last_bbox = bbox
                 self.stats['successful_tracks'] += 1
                 
+                # Reset coast mode
+                self.coast_mode = False
+                self.coast_frames = 0
+                
                 self.position_history.append((x_center, y_center))
                 self.confidence_history.append(confidence)
                 
@@ -501,10 +535,20 @@ class BallTracker:
                 logger.debug("Kalman filter unstable, increasing uncertainty")
                 self.kalman.P *= 1.3
             
+            # Coast Mode: If we were stable, assume the ball continues on its path
+            # This helps when a player briefly blocks the view
+            if self.consecutive_detections > 10 and self.lost_frames < self.max_coast_frames:
+                self.coast_mode = True
+                self.coast_frames += 1
+                self.is_tracking = True # Pretend we are still tracking to keep camera/zoom stable
+                # Return predicted position as if it were a valid track
+                return (pred_x, pred_y, True)
+            
             return (pred_x, pred_y, False)
         else:
             self.is_tracking = False
             self.consecutive_detections = 0
+            self.coast_mode = False
             logger.info(f"Track lost after {self.lost_frames} frames")
             return None
     

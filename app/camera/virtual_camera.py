@@ -180,9 +180,10 @@ class VirtualCamera:
         self.trajectory_predictor = TrajectoryPredictor(history_size=30)
         
         if use_pid:
-            # Reduced Kd from 0.15 to 0.05 to prevent noise amplification (jitter)
-            self.pid_x = PIDController(kp=0.8, ki=0.01, kd=0.05, output_limits=(-500, 500))
-            self.pid_y = PIDController(kp=0.8, ki=0.01, kd=0.05, output_limits=(-500, 500))
+            # Reduced Kd to 0.05 for stability
+            # Reduced output_limits to (-80, 80) to prevent instant snapping (max ~2400px/sec)
+            self.pid_x = PIDController(kp=0.8, ki=0.01, kd=0.05, output_limits=(-80, 80))
+            self.pid_y = PIDController(kp=0.8, ki=0.01, kd=0.05, output_limits=(-80, 80))
         
         self.current_center_x = frame_width // 2
         self.current_center_y = frame_height // 2
@@ -237,8 +238,8 @@ class VirtualCamera:
                 self.stability_mode_active = False
                 self.position_filter.set_smoothing_level(self.base_min_cutoff)
                 if self.use_pid:
-                    self.pid_x.output_limits = (-500, 500)
-                    self.pid_y.output_limits = (-500, 500)
+                    self.pid_x.output_limits = (-80, 80)
+                    self.pid_y.output_limits = (-80, 80)
                 logger.debug("Stability mode deactivated - normal smoothing restored")
         
         current_target = np.array([target_x, target_y])
