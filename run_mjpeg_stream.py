@@ -710,12 +710,14 @@ def main():
             
             if prev_crop is not None:
                 pcx1, pcy1, pcx2, pcy2 = prev_crop
+                
                 if det_ok:
                     alpha_x = 0.12
                     alpha_y = 0.10
                 else:
-                    alpha_x = 0.08
-                    alpha_y = 0.03
+                    # Heavy smoothing when predicting to prevent shake
+                    alpha_x = 0.02
+                    alpha_y = 0.02
                 
                 x1 = int(pcx1 * (1.0 - alpha_x) + x1 * alpha_x)
                 y1 = int(pcy1 * (1.0 - alpha_y) + y1 * alpha_y)
