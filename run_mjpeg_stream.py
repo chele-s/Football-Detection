@@ -259,9 +259,9 @@ def main():
     #     # Ensure even dimensions for video encoding
     #     hls_height = hls_height - (hls_height % 2)
         
-    # # Use source FPS if available, otherwise default to 30
-    # source_fps = getattr(reader, 'fps', 30.0)
-    # logger.info(f"Source FPS: {source_fps:.2f}")
+    # Use source FPS if available, otherwise default to 30
+    source_fps = getattr(reader, 'fps', 30.0)
+    logger.info(f"Source FPS: {source_fps:.2f}")
     # logger.info(f"HLS Resolution: {hls_width}x{hls_height}")
     
     # hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=hls_width, height=hls_height, fps=int(source_fps))
