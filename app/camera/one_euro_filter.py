@@ -17,7 +17,7 @@ class LowPassFilter:
     Filtro paso bajo exponencial simple.
     x_i = alpha * x_i + (1 - alpha) * x_{i-1}
     """
-    __slots__ = ('alpha', 'y', 's')
+    __slots__ = ('alpha', 'y', 's', 'initialized')
 
     def __init__(self, alpha: float, init_value: float = 0.0):
         self.alpha = alpha
