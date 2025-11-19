@@ -919,6 +919,20 @@ def main():
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
             resize_interp = cv2.INTER_CUBIC if (target_output_width > cropped.shape[1]) else cv2.INTER_LINEAR
+            display_frame = cv2.resize(
+                cropped,
+                (target_output_width, target_output_height),
+                interpolation=resize_interp
+            )
+            
+            mjpeg_server.update_frame(display_frame)
+            # hls_streamer.update_frame(display_frame)
+            
+            frame_count += 1
+            
+            # Frame Rate Limiting to match source FPS
+            # This prevents the "fast forward" effect when processing is faster than video
+            process_time = time.time() - loop_start
             target_frame_time = 1.0 / source_fps
             if process_time < target_frame_time:
                 time.sleep(target_frame_time - process_time)
