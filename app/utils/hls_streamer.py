@@ -30,8 +30,8 @@ class HLSStreamer:
         if self.running:
             return
         encoders = [
-            ('h264_nvenc', ['-preset', 'p1', '-tune', 'zerolatency']),
-            ('libx264', ['-preset', 'ultrafast', '-tune', 'zerolatency'])
+            ('h264_nvenc', ['-preset', 'p1', '-tune', 'zerolatency', '-profile:v', 'main']),
+            ('libx264', ['-preset', 'ultrafast', '-tune', 'zerolatency', '-profile:v', 'main'])
         ]
         
         for encoder, encoder_opts in encoders:
@@ -50,7 +50,7 @@ class HLSStreamer:
                 '-g', str(self.fps * 2),
                 '-sc_threshold', '0',
                 '-f', 'hls',
-                '-hls_time', '1',
+                '-hls_time', '2',
                 '-hls_list_size', '5',
                 '-hls_flags', 'delete_segments',
                 '-hls_segment_filename', os.path.join(self.output_dir, 'segment_%03d.ts'),
