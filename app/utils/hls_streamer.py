@@ -44,7 +44,8 @@ class HLSStreamer:
                 '-s', f'{self.width}x{self.height}',
                 '-r', str(self.fps),
                 '-i', '-',
-                '-c:v', encoder
+                '-c:v', encoder,
+                '-pix_fmt', 'yuv420p'
             ] + encoder_opts + [
                 '-g', str(self.fps * 2),
                 '-sc_threshold', '0',
