@@ -218,7 +218,6 @@ def main():
     
     logger.info("✅ Stream Server started!")
     logger.info(f"📺 MJPEG Stream: http://localhost:{mjpeg_port}/stream.mjpg")
-    logger.info(f"📺 HLS Stream:   http://localhost:{mjpeg_port}/hls/stream.m3u8")
     logger.info("💡 En Colab, usa ngrok para exponer el puerto 8554")
     
     # Open video
@@ -415,11 +414,11 @@ def main():
                     frame_in = frame[ry1:ry2, rx1:rx2]
                     use_roi = True
                     offx, offy = rx1, ry1
-                    # Resize on CPU to fixed size (1280x720) to prevent GPU memory fragmentation
-                    # This ensures the tensor shape is always constant (1, 3, 720, 1280)
-                    frame_in = cv2.resize(frame_in, (processing_width, processing_height))
+                    # Calculate scaling factors from the fixed processing size back to the original crop size
+                    roi_scale_w = (rx2 - rx1) / processing_width
+                    roi_scale_h = (ry2 - ry1) / processing_height
                     
-                    model_input, scale_w, scale_h = prepare_detection_tensor(
+                    model_input, _, _ = prepare_detection_tensor(
                         frame_in,
                         processing_width,
                         processing_height
@@ -445,17 +444,43 @@ def main():
                     )
                 if det_result[0] is not None:
                     x, y, w_box, h_box, conf = det_result[0]
+                    
+                    if use_roi:
+                        # Map from fixed processing size -> original crop size
+                        x = x * roi_scale_w
+                        y = y * roi_scale_h
+                        w_box = w_box * roi_scale_w
+                        h_box = h_box * roi_scale_h
+                    else:
+                        # Map from processing size -> full frame size (standard scaling)
+                        x = x * scale_w
+                        y = y * scale_h
+                        w_box = w_box * scale_w
+                        h_box = h_box * scale_h
+                        
                     det_result = (
-                        (x * scale_w, y * scale_h, w_box * scale_w, h_box * scale_h, conf),
+                        (x, y, w_box, h_box, conf),
                         det_result[1]
                     )
                 if det_result[1]:
+                    mapped_candidates = []
+                    for d in det_result[1]:
+                        dx, dy, dw, dh, dconf, dcls = d
+                        if use_roi:
+                            dx = dx * roi_scale_w
+                            dy = dy * roi_scale_h
+                            dw = dw * roi_scale_w
+                            dh = dh * roi_scale_h
+                        else:
+                            dx = dx * scale_w
+                            dy = dy * scale_h
+                            dw = dw * scale_w
+                            dh = dh * scale_h
+                        mapped_candidates.append((dx, dy, dw, dh, dconf, dcls))
+                    
                     det_result = (
                         det_result[0],
-                        [
-                            (d[0] * scale_w, d[1] * scale_h, d[2] * scale_w, d[3] * scale_h, d[4], d[5])
-                            for d in det_result[1]
-                        ]
+                        mapped_candidates
                     )
                 inf_time = (time.time() - start_inf) * 1000
             else:
