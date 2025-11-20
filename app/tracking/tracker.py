@@ -413,6 +413,9 @@ class BallTracker:
                 if dist_curr > allowed_distance:
                     if confidence > 0.85:
                         logger.info(f"High confidence detection ({confidence:.2f}) overrides distance gate ({dist_curr:.1f} > {allowed_distance:.1f})")
+                        # Inflate covariance to adapt to the sudden change
+                        self.kalman.P *= 10.0
+                        self.kalman.P[2:, 2:] *= 10.0
                     else:
                         logger.debug(f"Distance gate: {dist_curr:.1f} > {allowed_distance:.1f}")
                         self.stats['outliers_rejected'] += 1
@@ -443,6 +446,10 @@ class BallTracker:
                     if maha > gate_threshold:
                         if confidence > 0.75:
                             logger.info(f"High confidence ({confidence:.2f}) overrides Mahalanobis gate ({maha:.1f} > {gate_threshold:.1f})")
+                            # Inflate covariance to adapt to the sudden change
+                            self.kalman.P *= 10.0
+                            # Reset velocity covariance to allow quick adaptation
+                            self.kalman.P[2:, 2:] *= 10.0
                         else:
                             logger.debug(f"Mahalanobis gate: {maha:.1f} > {gate_threshold:.1f}")
                             self.stats['outliers_rejected'] += 1

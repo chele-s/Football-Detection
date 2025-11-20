@@ -244,30 +244,10 @@ def main():
         is_stream = video_path.startswith(('http', 'rtsp', 'rtmp'))
         reader = VideoReader(video_path, reconnect=is_stream)
         use_ffmpeg = False
-        logger.info(f"✅ Video opened with OpenCV: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")
-
-    # Initialize HLS Streamer
-    # Cap HLS resolution to 1920 width to ensure compatibility and performance
-    # The source video is 4608x1728 which is too large for standard H.264 levels and NVENC
-    # hls_width = int(config.get('output', {}).get('width', 1920))
-    # hls_height = int(config.get('output', {}).get('height', 1080))
-    
-    # if hls_width > 1920:
-    #     aspect_ratio = hls_height / hls_width
-    #     hls_width = 1920
-    #     hls_height = int(hls_width * aspect_ratio)
-    #     # Ensure even dimensions for video encoding
-    #     hls_height = hls_height - (hls_height % 2)
-        
+        logger.info(f"✅ Video opened with OpenCV: {reader.width}x{reader.height} @ {reader.fps:.1f}fps")     
     # Use source FPS if available, otherwise default to 30
     source_fps = getattr(reader, 'fps', 30.0)
     logger.info(f"Source FPS: {source_fps:.2f}")
-    # logger.info(f"HLS Resolution: {hls_width}x{hls_height}")
-    
-    # hls_streamer = HLSStreamer(output_dir=hls_output_dir, width=hls_width, height=hls_height, fps=int(source_fps))
-    # hls_streamer.start()
-    
-    # Re-initialize tracker with correct frame dimensions
     tracker = BallTracker(
         frame_width=reader.width,
         frame_height=reader.height,
@@ -378,7 +358,7 @@ def main():
     zoom_target_lp = 1.0
     roi_active = False
     roi_stable_frames = 0
-    roi_ready_frames = 40 
+    roi_ready_frames = 12 
     roi_fail_count = 0
     roi_fail_max = 150  
     roi_last_valid_pos = None
@@ -435,7 +415,10 @@ def main():
                     frame_in = frame[ry1:ry2, rx1:rx2]
                     use_roi = True
                     offx, offy = rx1, ry1
-                    # GPU-accelerated resizing
+                    # Resize on CPU to fixed size (1280x720) to prevent GPU memory fragmentation
+                    # This ensures the tensor shape is always constant (1, 3, 720, 1280)
+                    frame_in = cv2.resize(frame_in, (processing_width, processing_height))
+                    
                     model_input, scale_w, scale_h = prepare_detection_tensor(
                         frame_in,
                         processing_width,
