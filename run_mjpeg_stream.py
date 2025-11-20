@@ -405,82 +405,32 @@ def main():
                 else:
                     det_skip = 1
             if do_inference:
-                if prev_crop is not None and roi_active:
-                    rx1, ry1, rx2, ry2 = prev_crop
-                    rx1 = max(0, min(reader.width-2, int(rx1)))
-                    ry1 = max(0, min(reader.height-2, int(ry1)))
-                    rx2 = max(rx1+2, min(reader.width, int(rx2)))
-                    ry2 = max(ry1+2, min(reader.height, int(ry2)))
-                    frame_in = frame[ry1:ry2, rx1:rx2]
-                    use_roi = True
-                    offx, offy = rx1, ry1
-                    # Calculate scaling factors from the fixed processing size back to the original crop size
-                    roi_scale_w = (rx2 - rx1) / processing_width
-                    roi_scale_h = (ry2 - ry1) / processing_height
-                    
-                    model_input, _, _ = prepare_detection_tensor(
-                        frame_in,
-                        processing_width,
-                        processing_height
-                    )
-                    det_result = detector.predict_ball_only(
-                        model_input,
-                        ball_class_id,
-                        use_temporal_filtering=False,
-                        return_candidates=True
-                    )
-                else:
-                    # GPU-accelerated resizing
-                    model_input, scale_w, scale_h = prepare_detection_tensor(
-                        frame,
-                        processing_width,
-                        processing_height
-                    )
-                    det_result = detector.predict_ball_only(
-                        model_input, 
-                        ball_class_id,
-                        use_temporal_filtering=True,
-                        return_candidates=True
-                    )
+                # GPU-accelerated resizing (Full Frame)
+                model_input, scale_w, scale_h = prepare_detection_tensor(
+                    frame,
+                    processing_width,
+                    processing_height
+                )
+                det_result = detector.predict_ball_only(
+                    model_input, 
+                    ball_class_id,
+                    use_temporal_filtering=True,
+                    return_candidates=True
+                )
+                
                 if det_result[0] is not None:
                     x, y, w_box, h_box, conf = det_result[0]
-                    
-                    if use_roi:
-                        # Map from fixed processing size -> original crop size
-                        x = x * roi_scale_w
-                        y = y * roi_scale_h
-                        w_box = w_box * roi_scale_w
-                        h_box = h_box * roi_scale_h
-                    else:
-                        # Map from processing size -> full frame size (standard scaling)
-                        x = x * scale_w
-                        y = y * scale_h
-                        w_box = w_box * scale_w
-                        h_box = h_box * scale_h
-                        
                     det_result = (
-                        (x, y, w_box, h_box, conf),
+                        (x * scale_w, y * scale_h, w_box * scale_w, h_box * scale_h, conf),
                         det_result[1]
                     )
                 if det_result[1]:
-                    mapped_candidates = []
-                    for d in det_result[1]:
-                        dx, dy, dw, dh, dconf, dcls = d
-                        if use_roi:
-                            dx = dx * roi_scale_w
-                            dy = dy * roi_scale_h
-                            dw = dw * roi_scale_w
-                            dh = dh * roi_scale_h
-                        else:
-                            dx = dx * scale_w
-                            dy = dy * scale_h
-                            dw = dw * scale_w
-                            dh = dh * scale_h
-                        mapped_candidates.append((dx, dy, dw, dh, dconf, dcls))
-                    
                     det_result = (
                         det_result[0],
-                        mapped_candidates
+                        [
+                            (d[0] * scale_w, d[1] * scale_h, d[2] * scale_w, d[3] * scale_h, d[4], d[5])
+                            for d in det_result[1]
+                        ]
                     )
                 inf_time = (time.time() - start_inf) * 1000
             else:
@@ -618,10 +568,9 @@ def main():
                 else:
                     roi_stable_frames += 1
                     if (not roi_active) and roi_stable_frames >= roi_ready_frames:
-                        roi_active = True
-                        roi_fail_count = 0
-                        roi_last_valid_pos = None
-                        logger.info(f"✓ ROI activated - now detecting only in zoom region for performance")
+                        # ROI disabled per user request for stability
+                        # roi_active = True
+                        pass
                     if is_tracking:
                         last_reliable_position = (x, y)
                     else:
