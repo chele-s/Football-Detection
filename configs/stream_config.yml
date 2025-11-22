@@ -1,7 +1,7 @@
 stream:
   input_url: "test_pro_4k_final.mp4"
   output_url: "rtmp://localhost/live/output"
-  target_fps: 50
+  target_fps: 20
   bitrate: "4000k"
   preset: "ultrafast"
   show_stats: true
