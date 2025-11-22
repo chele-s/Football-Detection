@@ -27,6 +27,7 @@ from app.tracking import BallTracker
 from app.utils import VideoReader, load_config, merge_configs, MJPEGServer
 from app.utils.hls_streamer import HLSStreamer
 from app.camera import VirtualCamera
+from app.utils.image_processing import apply_clahe
 
 
 def prepare_detection_frame(image: np.ndarray, max_width: int = None, max_height: int = None):
@@ -405,9 +406,10 @@ def main():
                 else:
                     det_skip = 1
             if do_inference:
+                frame_for_model = apply_clahe(frame, clip_limit=3.5, tile_grid_size=(4, 4))
                 # GPU-accelerated resizing (Full Frame)
                 model_input, scale_w, scale_h = prepare_detection_tensor(
-                    frame,
+                    frame_for_model,
                     processing_width,
                     processing_height
                 )
