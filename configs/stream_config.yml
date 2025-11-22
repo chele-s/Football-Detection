@@ -8,16 +8,16 @@ stream:
   debug_mode: false
 
 output:
-  width: 3840
-  height: 2160
+  width: 4608
+  height: 1728
 
 processing:
-  detection_width: 1600
-  detection_height: 900
+  detection_width: 1920
+  detection_height: 1080
 
 camera:
-  base_output_width: 3840
-  base_output_height: 2160
+  base_output_width: 4608
+  base_output_height: 1728
   dead_zone: 0.10
   anticipation: 0.35
   zoom_padding: 1.2
