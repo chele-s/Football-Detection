@@ -1,23 +1,23 @@
 stream:
-  input_url: "test_client_4.mp4"
+  input_url: "test_pro_4k.mp4"
   output_url: "rtmp://localhost/live/output"
-  target_fps: 20
+  target_fps: 50
   bitrate: "4000k"
   preset: "ultrafast"
   show_stats: true
   debug_mode: false
 
 output:
-  width: 4608
-  height: 1728
+  width: 3840
+  height: 2160
 
 processing:
   detection_width: 1920
   detection_height: 1080
 
 camera:
-  base_output_width: 4608
-  base_output_height: 1728
+  base_output_width: 3840
+  base_output_height: 2160
   dead_zone: 0.10
   anticipation: 0.35
   zoom_padding: 1.2
