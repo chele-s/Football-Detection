@@ -12,8 +12,8 @@ output:
   height: 2160
 
 processing:
-  detection_width: 1920
-  detection_height: 1080
+  detection_width: 1280
+  detection_height: 720
 
 camera:
   base_output_width: 3840
