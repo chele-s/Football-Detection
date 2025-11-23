@@ -8,14 +8,20 @@ services:
     container_name: rf-detr-stream
     restart: unless-stopped
     
+    # Performance Optimizations for PyTorch/CUDA
+    shm_size: '16gb'  # Critical for PyTorch DataLoader
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    
     # GPU support
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
+              count: 1
               capabilities: [gpu, video, compute, utility]
-              device_ids: ['0']
     
     # Ports
     ports:
@@ -31,17 +37,16 @@ services:
     
     # Environment
     environment:
-      - CUDA_VISIBLE_DEVICES=0
-      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - PYTHONUNBUFFERED=1
     
     # Logging
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "50m"
+        max-file: "5"
     
     # Health check
     healthcheck:
